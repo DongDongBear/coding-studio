@@ -22,6 +22,7 @@ import { isValidMode, type PipelineMode } from "./pipeline/modes.js";
 import type { EvaluationStrategy } from "./strategies/types.js";
 import { waitForConfirmation } from "./interactive.js";
 import { CodingStudioTUI } from "./tui.js";
+import fs from "node:fs";
 import { ContractDrafterAgent } from "./agents/contract-drafter.js";
 import path from "node:path";
 import os from "node:os";
@@ -415,8 +416,11 @@ program
           tui.setRunning(true);
           tui.setStatus("Running pipeline...");
 
-          const config = loadConfig(CONFIG_PATH);
-          tui.agentLog("system", `Config: ${CONFIG_PATH}, Planner: ${config.models.planner.provider}/${config.models.planner.model}`);
+          // Must compute config path at runtime (not module load time)
+          // because cwd matters and CONFIG_PATH is stale
+          const runtimeConfigPath = path.join(process.cwd(), ".coding-studio.yml");
+          const config = loadConfig(runtimeConfigPath);
+          tui.agentLog("system", `${config.models.planner.provider}/${config.models.planner.model} | cwd: ${process.cwd()}`);
           const authStorage = AuthStorage.create(AUTH_PATH);
           const rotator = new KeyRotator(authStorage);
           const getApiKey = (provider: string) =>
