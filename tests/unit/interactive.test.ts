@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Orchestrator, type OrchestratorDeps, type OrchestratorEvent } from "../../src/orchestrator.js";
+import { Orchestrator, type OrchestratorDeps } from "../../src/orchestrator.js";
 import { ArtifactStore } from "../../src/artifacts/store.js";
 import type { EvalReport } from "../../src/artifacts/types.js";
 
