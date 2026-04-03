@@ -3,8 +3,8 @@ import type { ArtifactStore } from "./artifacts/store.js";
 import type { EvalReport, PipelineStatus } from "./artifacts/types.js";
 
 export interface ContractDrafter {
-  draftContract(spec: string): Promise<string>;
-  reviseContract(draft: string, feedback: string): Promise<string>;
+  draftContract(cwd: string, spec: string): Promise<string>;
+  reviseContract(cwd: string, draft: string, feedback: string): Promise<string>;
 }
 
 export interface ContractReviewer {
@@ -12,8 +12,8 @@ export interface ContractReviewer {
 }
 
 export interface OrchestratorDeps {
-  planner: { plan(prompt: string): Promise<string> } & Partial<ContractDrafter>;
-  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> };
+  planner: { plan(prompt: string): Promise<string> };
+  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> } & Partial<ContractDrafter>;
   evaluator: { evaluate(spec: string, contract: string, round: number): Promise<EvalReport> } & Partial<ContractReviewer>;
   contractManager: {
     isEnabled(): boolean;
@@ -119,10 +119,11 @@ export class Orchestrator {
     if (steps.contract && this.deps.contractManager.isEnabled()) {
       this.emit({ type: "phase", phase: "contracting" });
 
-      if (this.deps.planner.draftContract && this.deps.evaluator.reviewContract) {
-        // Full agent-driven contract handshake (Planner drafts, Evaluator reviews)
-        this.emit({ type: "log", message: "Planner drafting contract..." });
-        let draft = await this.deps.planner.draftContract(spec);
+      if (this.deps.generator.draftContract && this.deps.evaluator.reviewContract) {
+        // Full agent-driven contract handshake
+        // Generator drafts (it knows the codebase), Evaluator reviews (it knows how to test)
+        this.emit({ type: "log", message: "Generator (CC) drafting contract based on repo state..." });
+        let draft = await this.deps.generator.draftContract(this.config.cwd, spec);
         this.deps.contractManager.saveDraft(draft);
 
         // Review/revise loop
@@ -143,7 +144,7 @@ export class Orchestrator {
 
           this.emit({ type: "log", message: `Contract revision needed: ${review.feedback.slice(0, 100)}...` });
           this.deps.contractManager.recordRevision();
-          draft = await this.deps.planner.reviseContract!(draft, review.feedback);
+          draft = await this.deps.generator.reviseContract!(this.config.cwd, draft, review.feedback);
           this.deps.contractManager.saveDraft(draft);
         }
       } else {

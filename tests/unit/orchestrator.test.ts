@@ -149,9 +149,9 @@ describe("Orchestrator", () => {
 
   it("iterative-qa: runs full contract handshake when agents support it", async () => {
     const deps = createMockDeps(store);
-    // Add contract drafting/reviewing capabilities (Planner drafts, Evaluator reviews)
-    (deps.planner as any).draftContract = vi.fn().mockResolvedValue("# Draft Contract\n- AC1: Login works");
-    (deps.planner as any).reviseContract = vi.fn().mockResolvedValue("# Revised Contract\n- AC1: Login works\n- AC2: Logout works");
+    // Generator drafts contract (it knows the codebase), Evaluator reviews (it knows how to test)
+    (deps.generator as any).draftContract = vi.fn().mockResolvedValue("# Draft Contract\n- AC1: Login works");
+    (deps.generator as any).reviseContract = vi.fn().mockResolvedValue("# Revised Contract\n- AC1: Login works\n- AC2: Logout works");
     (deps.evaluator as any).reviewContract = vi.fn()
       .mockResolvedValueOnce({ approved: false, feedback: "Missing logout test" })
       .mockResolvedValueOnce({ approved: true, feedback: "Looks good now" });
@@ -159,9 +159,9 @@ describe("Orchestrator", () => {
     const orch = new Orchestrator(deps, { mode: "iterative-qa", maxRounds: 1, interactive: false, cwd: tmpDir });
     await orch.run("build auth system");
 
-    expect((deps.planner as any).draftContract).toHaveBeenCalledOnce();
+    expect((deps.generator as any).draftContract).toHaveBeenCalledOnce();
     expect((deps.evaluator as any).reviewContract).toHaveBeenCalledTimes(2);
-    expect((deps.planner as any).reviseContract).toHaveBeenCalledOnce();
+    expect((deps.generator as any).reviseContract).toHaveBeenCalledOnce();
     expect(deps.contractManager.saveDraft).toHaveBeenCalledTimes(2); // draft + revision
     expect(deps.contractManager.saveReview).toHaveBeenCalledTimes(2);
     expect(deps.contractManager.recordRevision).toHaveBeenCalledOnce();
