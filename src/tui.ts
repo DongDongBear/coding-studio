@@ -104,9 +104,20 @@ export class CodingStudioTUI {
     this.screen.render();
   }
 
-  /** Append a line to the output with blessed color tags */
+  /** Escape text so blessed doesn't try to parse { } as color tags */
+  static esc(text: string): string {
+    return text.replace(/\{/g, "{open}").replace(/\}/g, "{close}");
+  }
+
+  /** Append a line with blessed tags (tags in the string ARE interpreted) */
   log(text: string): void {
     (this.outputArea as any).log(text);
+    this.screen.render();
+  }
+
+  /** Append a line with content safely escaped (no tag interpretation for content) */
+  logSafe(text: string): void {
+    (this.outputArea as any).log(CodingStudioTUI.esc(text));
     this.screen.render();
   }
 
@@ -132,8 +143,8 @@ export class CodingStudioTUI {
     agent: "planner" | "generator" | "evaluator" | "user" | "system",
     text: string,
   ): void {
-    this.flushTextBuffer(); // flush any streaming in progress
-    this.log(`${this.getAgentLabel(agent)} ${text}`);
+    this.flushTextBuffer();
+    this.log(`${this.getAgentLabel(agent)} ${CodingStudioTUI.esc(text)}`);
   }
 
   /** Stream a text delta — buffers and flushes complete lines */
@@ -151,9 +162,8 @@ export class CodingStudioTUI {
     // Flush complete lines
     const lines = buf.split("\n");
     if (lines.length > 1) {
-      // All but the last are complete lines
       for (let i = 0; i < lines.length - 1; i++) {
-        this.log(`  ${lines[i]}`);
+        this.log(`  ${CodingStudioTUI.esc(lines[i])}`);
       }
       this.textBuffer.set(agent, lines[lines.length - 1]);
     }
@@ -169,9 +179,9 @@ export class CodingStudioTUI {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    for (const [agent, buf] of this.textBuffer) {
+    for (const [_agent, buf] of this.textBuffer) {
       if (buf.trim()) {
-        this.log(`  ${buf}`);
+        this.log(`  ${CodingStudioTUI.esc(buf)}`);
       }
     }
     this.textBuffer.clear();
@@ -190,14 +200,15 @@ export class CodingStudioTUI {
       evaluator: "magenta",
     };
     const color = agentColors[agent] ?? "white";
+    const safeDetail = detail ? CodingStudioTUI.esc(detail) : "";
     if (status === "start") {
       this.log(
         `  {${color}-fg}▸{/${color}-fg} {bold}${tool}{/bold} ${
-          detail ? `{#666-fg}${detail}{/#666-fg}` : ""
+          safeDetail ? `{#666-fg}${safeDetail}{/#666-fg}` : ""
         }`,
       );
-    } else if (detail) {
-      this.log(`    {#666-fg}${detail}{/#666-fg}`);
+    } else if (safeDetail) {
+      this.log(`    {#666-fg}${safeDetail}{/#666-fg}`);
     }
   }
 
@@ -217,27 +228,28 @@ export class CodingStudioTUI {
     this.log(
       `\n{${vColor}-fg}{bold}━━━ Eval: ${verdict.toUpperCase()} (${score.toFixed(1)}/10) ━━━{/bold}{/${vColor}-fg}`,
     );
+    const e = CodingStudioTUI.esc;
     for (const s of scores) {
       const sColor =
         s.score >= 7 ? "green" : s.score >= 5 ? "yellow" : "red";
       this.log(
-        `  ${s.name.padEnd(18)} {${sColor}-fg}${s.score}{/${sColor}-fg}/10  {#666-fg}${s.feedback.slice(0, 60)}{/#666-fg}`,
+        `  ${e(s.name).padEnd(18)} {${sColor}-fg}${s.score}{/${sColor}-fg}/10  {#666-fg}${e(s.feedback.slice(0, 60))}{/#666-fg}`,
       );
     }
     if (blockers.length > 0) {
       this.log(`{red-fg}Blockers:{/red-fg}`);
       for (const b of blockers) {
-        this.log(`  {red-fg}[${b.severity}]{/red-fg} ${b.description}`);
+        this.log(`  {red-fg}[${e(b.severity)}]{/red-fg} ${e(b.description)}`);
       }
     }
     if (bugs.length > 0) {
       this.log(`{yellow-fg}Bugs:{/yellow-fg}`);
       for (const bug of bugs.slice(0, 5)) {
         const loc = bug.location
-          ? ` {#666-fg}(${bug.location}){/#666-fg}`
+          ? ` {#666-fg}(${e(bug.location)}){/#666-fg}`
           : "";
         this.log(
-          `  {yellow-fg}[${bug.severity}]{/yellow-fg}${loc} ${bug.description}`,
+          `  {yellow-fg}[${e(bug.severity)}]{/yellow-fg}${loc} ${e(bug.description)}`,
         );
       }
     }
@@ -271,7 +283,7 @@ export class CodingStudioTUI {
         this.setStatus(`Round ${event.round}`);
         break;
       case "log":
-        this.log(`{#666-fg}${event.message}{/#666-fg}`);
+        this.log(`{#666-fg}${CodingStudioTUI.esc(event.message)}{/#666-fg}`);
         break;
       case "agent_text":
         this.agentStreamDelta(event.agent, event.delta);
