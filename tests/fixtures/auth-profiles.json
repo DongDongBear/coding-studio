@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "profiles": {
+    "anthropic:main": {
+      "type": "api_key",
+      "provider": "anthropic",
+      "key": "sk-ant-test-key-1"
+    },
+    "anthropic:backup": {
+      "type": "api_key",
+      "provider": "anthropic",
+      "key": "sk-ant-test-key-2"
+    },
+    "openai:main": {
+      "type": "api_key",
+      "provider": "openai",
+      "key": "sk-openai-test-key"
+    },
+    "anthropic:sub": {
+      "type": "token",
+      "provider": "anthropic",
+      "token": "tok-sub-test",
+      "expires": "2027-01-01T00:00:00Z"
+    }
+  },
+  "order": {
+    "anthropic": ["anthropic:main", "anthropic:backup", "anthropic:sub"],
+    "openai": ["openai:main"]
+  },
+  "lastGood": {
+    "anthropic": "anthropic:main"
+  }
+}
