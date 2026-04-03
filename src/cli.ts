@@ -21,6 +21,7 @@ import { CompositeStrategy } from "./strategies/composite.js";
 import { isValidMode, type PipelineMode } from "./pipeline/modes.js";
 import type { EvaluationStrategy } from "./strategies/types.js";
 import { waitForConfirmation } from "./interactive.js";
+import { CodingStudioTUI } from "./tui.js";
 import path from "node:path";
 import os from "node:os";
 
@@ -113,6 +114,7 @@ program
   .option("-m, --mode <mode>", "Pipeline mode: solo | plan-build | final-qa | iterative-qa")
   .option("-i, --interactive", "Pause at key checkpoints for confirmation")
   .option("-f, --full-auto", "Run fully autonomously — model decides everything, no pauses")
+  .option("--no-tui", "Disable TUI even when stdout is a TTY (plain output)")
   .action(async (prompt, opts) => {
     const config = loadConfig(CONFIG_PATH);
     const authStorage = AuthStorage.create(AUTH_PATH);
@@ -148,6 +150,56 @@ program
     const isFullAuto = opts.fullAuto ?? false;
     const isInteractive = isFullAuto ? false : (opts.interactive ?? config.pipeline.interactive);
 
+    // Use TUI when stdout is a TTY (and --no-tui not specified)
+    const useTui = opts.tui !== false && process.stdout.isTTY;
+
+    if (useTui) {
+      // TUI mode: rich blessed terminal UI
+      const tui = new CodingStudioTUI();
+      tui.setRunning(true);
+      tui.setStatus(`Running: ${prompt.slice(0, 50)}${prompt.length > 50 ? "…" : ""}`);
+      tui.agentLog("system", `Starting pipeline: ${prompt}`);
+
+      tui.setCommandHandler((cmd, _args) => {
+        if (cmd === "abort" || cmd === "quit" || cmd === "exit") {
+          tui.agentLog("system", "Aborting...");
+          tui.destroy();
+          process.exit(0);
+        } else {
+          tui.agentLog("system", `Command /${cmd} not available during run. Use /abort to stop.`);
+        }
+      });
+
+      const orchestrator = new Orchestrator(deps, {
+        mode,
+        maxRounds: config.evaluation.maxRounds,
+        interactive: isInteractive,
+        cwd: process.cwd(),
+        onPause: isInteractive
+          ? async (reason) => {
+              tui.agentLog("system", `Paused: ${reason}. Press Enter to continue or type abort.`);
+              const response = await tui.waitForInput();
+              return response.toLowerCase() !== "abort";
+            }
+          : undefined,
+      });
+
+      orchestrator.onEvent((event) => tui.handleOrchestratorEvent(event));
+
+      try {
+        await orchestrator.run(prompt);
+      } catch (err: any) {
+        tui.agentLog("system", `Pipeline failed: ${err.message}`);
+        tui.setStatus("Error");
+      } finally {
+        tui.setRunning(false);
+        // Keep TUI alive so user can read results; Ctrl+C to exit
+        tui.agentLog("system", "Done. Press Ctrl+C to exit.");
+      }
+      return;
+    }
+
+    // Plain output mode (piped / --no-tui)
     if (isFullAuto) {
       console.log("[Full-Auto Mode] Pipeline will run autonomously. Model decides everything.\n");
     }
@@ -324,6 +376,184 @@ program
   .action(async () => {
     const authStorage = AuthStorage.create(AUTH_PATH);
     await runSetup(authStorage);
+  });
+
+// --- tui (default interactive mode) ---
+program
+  .command("tui", { isDefault: true })
+  .description("Interactive terminal UI (default when no subcommand given)")
+  .action(async () => {
+    const tui = new CodingStudioTUI();
+
+    tui.agentLog("system", "Welcome to Coding Studio!");
+    tui.agentLog(
+      "system",
+      "Commands: /run <prompt>  /agent  /status  /abort  /quit",
+    );
+    tui.agentLog("system", "Plain text is queued as steering for the pipeline.");
+
+    let currentOrchestrator: Orchestrator | null = null;
+
+    tui.setCommandHandler(async (cmd, args) => {
+      switch (cmd) {
+        case "run": {
+          if (!args.trim()) {
+            tui.agentLog("system", "Usage: /run <prompt>");
+            return;
+          }
+          if (tui.isRunning()) {
+            tui.agentLog("system", "Pipeline already running. Use /abort first.");
+            return;
+          }
+
+          tui.setRunning(true);
+          tui.setStatus("Running pipeline...");
+
+          const config = loadConfig(CONFIG_PATH);
+          const authStorage = AuthStorage.create(AUTH_PATH);
+          const rotator = new KeyRotator(authStorage);
+          const getApiKey = (provider: string) =>
+            rotator.resolveKeyForProvider(provider);
+
+          const mode: PipelineMode =
+            config.pipeline.mode && isValidMode(config.pipeline.mode)
+              ? config.pipeline.mode
+              : "iterative-qa";
+
+          const artifactsDir = path.resolve(
+            process.cwd(),
+            config.pipeline.artifactsDir,
+          );
+          const artifactStore = new ArtifactStore(artifactsDir);
+
+          const deps: OrchestratorDeps = {
+            planner: new Planner(
+              config.planner,
+              config.models.planner,
+              getApiKey,
+            ),
+            generator: new Generator(config.generator),
+            evaluator: new Evaluator(
+              {
+                criteria: config.evaluation.criteria,
+                passRules: config.evaluation.passRules,
+              },
+              config.models.evaluator,
+              getStrategy(config.evaluation.strategy, config.evaluation),
+              getApiKey,
+              process.cwd(),
+            ),
+            contractManager: new ContractManager(
+              config.pipeline.contract,
+              artifactsDir,
+            ),
+            runtimeManager: new RuntimeManager(config.runtime),
+            checkpointManager: new CheckpointManager(
+              config.generator.checkpoint,
+              artifactsDir,
+            ),
+            artifactStore,
+          };
+
+          const orch = new Orchestrator(deps, {
+            mode,
+            maxRounds: config.evaluation.maxRounds,
+            interactive: config.pipeline.interactive ?? false,
+            cwd: process.cwd(),
+            onPause: async (reason) => {
+              tui.agentLog(
+                "system",
+                `Paused: ${reason}. Press Enter to continue or type /abort.`,
+              );
+              const response = await tui.waitForInput();
+              if (response === "/abort" || response === "abort") {
+                return false;
+              }
+              // Any text typed during pause goes to user messages
+              if (response) {
+                tui.agentLog("user", response);
+                tui.drainUserMessages(); // flush, we already logged it
+              }
+              return true;
+            },
+          });
+
+          currentOrchestrator = orch;
+          orch.onEvent((event) => tui.handleOrchestratorEvent(event));
+
+          orch
+            .run(args.trim())
+            .catch((err: Error) => {
+              tui.agentLog("system", `Pipeline error: ${err.message}`);
+              tui.setStatus("Error");
+            })
+            .finally(() => {
+              tui.setRunning(false);
+              currentOrchestrator = null;
+            });
+          break;
+        }
+
+        case "agent": {
+          // Spawn interactive claude CLI — destroys TUI, exits after claude returns
+          await tui.spawnAgent();
+          process.exit(0);
+        }
+
+        case "status": {
+          const config = loadConfig(CONFIG_PATH);
+          const artifactsDir = path.resolve(
+            process.cwd(),
+            config.pipeline.artifactsDir,
+          );
+          const artifactStore = new ArtifactStore(artifactsDir);
+          const pipelineStatus = artifactStore.readStatus();
+          if (pipelineStatus) {
+            tui.agentLog(
+              "system",
+              `Phase: ${pipelineStatus.phase} | Mode: ${pipelineStatus.mode} | Round: ${pipelineStatus.currentRound}/${pipelineStatus.maxRounds}`,
+            );
+            if (pipelineStatus.history.length > 0) {
+              for (const h of pipelineStatus.history) {
+                const verdict = h.verdict ? ` [${h.verdict}]` : "";
+                const score =
+                  h.score !== undefined ? ` score=${h.score.toFixed(1)}` : "";
+                tui.agentLog(
+                  "system",
+                  `  Round ${h.round}:${verdict}${score} build=${h.buildDuration.toFixed(0)}s`,
+                );
+              }
+            }
+          } else {
+            tui.agentLog("system", "No pipeline status found.");
+          }
+          break;
+        }
+
+        case "abort": {
+          if (!tui.isRunning()) {
+            tui.agentLog("system", "No pipeline running.");
+          } else {
+            tui.agentLog("system", "Abort requested. (Pipeline will stop at next pause.)");
+            tui.setRunning(false);
+            currentOrchestrator = null;
+          }
+          break;
+        }
+
+        case "quit":
+        case "exit": {
+          tui.destroy();
+          process.exit(0);
+        }
+
+        default:
+          tui.agentLog(
+            "system",
+            `Unknown command: /${cmd}. Try /run, /agent, /status, /abort, /quit`,
+          );
+      }
+    });
   });
 
 program.parse();
