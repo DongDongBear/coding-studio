@@ -13,6 +13,7 @@ export class CodingStudioTUI {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private onCommand?: (cmd: string, args: string) => void;
+  private inputResolver: ((value: string) => void) | null = null;
 
   constructor() {
     this.screen = blessed.screen({
@@ -368,6 +369,15 @@ export class CodingStudioTUI {
   }
 
   private handleInput(value: string): void {
+    // If pipeline is waiting for confirmation (pause), resolve the waiter
+    if (this.inputResolver) {
+      this.agentLog("user", value || "(continue)");
+      const resolve = this.inputResolver;
+      this.inputResolver = null;
+      resolve(value);
+      return;
+    }
+
     if (!value) return;
 
     // Commands
@@ -393,14 +403,10 @@ export class CodingStudioTUI {
     }
   }
 
-  /** Wait for user to press Enter (for pause/confirmation) */
+  /** Wait for user input at a pause point. Next submit goes here, not to handleInput's normal flow. */
   waitForInput(): Promise<string> {
     return new Promise((resolve) => {
-      const handler = (value: string) => {
-        this.inputBox.removeListener("submit", handler);
-        resolve(value.trim());
-      };
-      this.inputBox.on("submit", handler);
+      this.inputResolver = resolve;
     });
   }
 }
