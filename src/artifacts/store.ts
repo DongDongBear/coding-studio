@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { EvalReport, PipelineStatus } from "./types.js";
+import type { EvalReport, PipelineStatus, RuntimeState } from "./types.js";
 
 export class ArtifactStore {
   private dir: string;
@@ -79,6 +79,15 @@ export class ArtifactStore {
       .filter((f) => f.startsWith("round-") && f.endsWith(".json"))
       .sort()
       .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8")) as EvalReport);
+  }
+
+  writeRuntimeState(state: RuntimeState): void {
+    this.writeTo("runtime.json", JSON.stringify(state, null, 2));
+  }
+
+  readRuntimeState(): RuntimeState | undefined {
+    const raw = this.readFrom("runtime.json");
+    return raw ? (JSON.parse(raw) as RuntimeState) : undefined;
   }
 
   writeStatus(status: PipelineStatus): void {

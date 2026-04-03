@@ -1,9 +1,10 @@
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { EvaluationStrategy } from "./types.js";
 
 export class CodeReviewStrategy implements EvaluationStrategy {
   name = "code-review";
 
-  getTools(): any[] {
+  getTools(): AgentTool[] {
     // Code review uses file reading tools — in real usage these come from the agent's tool registry.
     // We return empty here; the Evaluator will always have readFile/glob/grep.
     return [];

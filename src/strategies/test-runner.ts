@@ -1,9 +1,10 @@
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { EvaluationStrategy } from "./types.js";
 
 export class TestRunnerStrategy implements EvaluationStrategy {
   name = "test-runner";
 
-  getTools(): any[] {
+  getTools(): AgentTool[] {
     return [];
   }
 

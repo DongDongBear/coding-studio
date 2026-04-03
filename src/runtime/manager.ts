@@ -16,7 +16,9 @@ export interface RuntimeConfig {
   captureLogs: boolean;
 }
 
-export interface RuntimeState {
+import type { RuntimeState as RuntimeStateArtifact } from "../artifacts/types.js";
+
+export interface InternalRuntimeState {
   status: "starting" | "ready" | "failed" | "stopped";
   url?: string;
   pid?: number;
@@ -25,16 +27,18 @@ export interface RuntimeState {
   error?: string;
 }
 
+export type { RuntimeStateArtifact };
+
 export class RuntimeManager {
   private config: RuntimeConfig;
   private process: ChildProcess | null = null;
-  private state: RuntimeState = { status: "stopped", logs: [] };
+  private state: InternalRuntimeState = { status: "stopped", logs: [] };
 
   constructor(config: RuntimeConfig) {
     this.config = config;
   }
 
-  getState(): RuntimeState {
+  getState(): InternalRuntimeState {
     return { ...this.state };
   }
 
@@ -55,7 +59,7 @@ export class RuntimeManager {
   }
 
   /** Start dev server and wait for ready pattern */
-  async start(cwd: string): Promise<RuntimeState> {
+  async start(cwd: string): Promise<InternalRuntimeState> {
     this.state = { status: "starting", logs: [], url: this.config.start.url };
 
     this.process = spawn(this.config.start.command, [], {
@@ -67,7 +71,7 @@ export class RuntimeManager {
     this.state.pid = this.process.pid;
     this.state.startedAt = new Date().toISOString();
 
-    return new Promise<RuntimeState>((resolve, reject) => {
+    return new Promise<InternalRuntimeState>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.state.status = "failed";
         this.state.error = `Timeout: ready pattern "${this.config.start.readyPattern}" not seen within ${this.config.start.timeoutSec}s`;

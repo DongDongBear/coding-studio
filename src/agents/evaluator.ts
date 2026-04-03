@@ -152,6 +152,10 @@ export class Evaluator {
     const evalPrompt = `Evaluate the project.\n\n## Specification:\n${spec}\n\n## Contract:\n${contract}`;
     await agent.prompt(evalPrompt);
 
+    if (!result.trim()) {
+      throw new Error("Evaluator returned empty response. Check model configuration and API key.");
+    }
+
     // Parse the LLM's JSON response with fallback extraction
     const parsed = extractJSON(result);
 

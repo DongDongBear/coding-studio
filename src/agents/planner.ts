@@ -87,6 +87,10 @@ export class Planner {
 
     await agent.prompt(userPrompt);
 
+    if (!result.trim()) {
+      throw new Error("Planner returned empty response. Check model configuration and API key.");
+    }
+
     return result;
   }
 }
