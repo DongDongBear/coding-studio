@@ -93,4 +93,72 @@ export class Planner {
 
     return result;
   }
+
+  /** Draft an acceptance contract from a spec */
+  async draftContract(spec: string): Promise<string> {
+    const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
+
+    const agent = new Agent({
+      initialState: {
+        model,
+        systemPrompt: [
+          "You are a technical project planner drafting an acceptance contract.",
+          "Given a product specification, produce a contract that contains:",
+          "- **Scope**: what this build delivers",
+          "- **Non-goals**: what is explicitly out of scope",
+          "- **Acceptance Criteria**: specific, testable conditions (each should be verifiable by clicking/testing)",
+          "- **Test Plan**: key interactions, API endpoints, and data states the evaluator must verify",
+          "",
+          "Be specific. Each acceptance criterion should describe an observable behavior, not an implementation detail.",
+          "Output ONLY the contract in markdown.",
+        ].join("\n"),
+      },
+      getApiKey: this.getApiKey,
+    });
+
+    let result = "";
+    agent.subscribe((event: any) => {
+      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+        result += event.assistantMessageEvent.delta;
+      }
+    });
+
+    await agent.prompt(`Draft an acceptance contract for this specification:\n\n${spec}`);
+
+    if (!result.trim()) {
+      throw new Error("Contract drafting returned empty response.");
+    }
+    return result;
+  }
+
+  /** Revise a contract based on reviewer feedback */
+  async reviseContract(draft: string, feedback: string): Promise<string> {
+    const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
+
+    const agent = new Agent({
+      initialState: {
+        model,
+        systemPrompt: [
+          "You are revising an acceptance contract based on reviewer feedback.",
+          "Incorporate the feedback while keeping the contract specific and testable.",
+          "Output ONLY the revised contract in markdown.",
+        ].join("\n"),
+      },
+      getApiKey: this.getApiKey,
+    });
+
+    let result = "";
+    agent.subscribe((event: any) => {
+      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+        result += event.assistantMessageEvent.delta;
+      }
+    });
+
+    await agent.prompt(`# Current Contract\n\n${draft}\n\n# Reviewer Feedback\n\n${feedback}`);
+
+    if (!result.trim()) {
+      throw new Error("Contract revision returned empty response.");
+    }
+    return result;
+  }
 }
