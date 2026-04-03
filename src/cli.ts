@@ -16,6 +16,8 @@ import { RuntimeManager } from "./runtime/manager.js";
 import { CheckpointManager } from "./checkpoints/manager.js";
 import { CodeReviewStrategy } from "./strategies/code-review.js";
 import { TestRunnerStrategy } from "./strategies/test-runner.js";
+import { PlaywrightStrategy } from "./strategies/playwright.js";
+import { CompositeStrategy } from "./strategies/composite.js";
 import { isValidMode, type PipelineMode } from "./pipeline/modes.js";
 import type { EvaluationStrategy } from "./strategies/types.js";
 import path from "node:path";
@@ -24,12 +26,16 @@ import os from "node:os";
 const AUTH_PATH = path.join(os.homedir(), ".coding-studio", "auth.json");
 const CONFIG_PATH = path.join(process.cwd(), ".coding-studio.yml");
 
-function getStrategy(name: string): EvaluationStrategy {
+function getStrategy(name: string, config: any): EvaluationStrategy {
   switch (name) {
     case "code-review": return new CodeReviewStrategy();
     case "test-runner": return new TestRunnerStrategy();
-    case "composite": return new CodeReviewStrategy(); // TODO: implement CompositeStrategy
-    case "playwright": return new CodeReviewStrategy(); // TODO: implement PlaywrightStrategy
+    case "playwright": return new PlaywrightStrategy(config?.playwright);
+    case "composite": return new CompositeStrategy([
+      new CodeReviewStrategy(),
+      new TestRunnerStrategy(),
+      new PlaywrightStrategy(config?.playwright),
+    ]);
     default: return new CodeReviewStrategy();
   }
 }
@@ -124,7 +130,7 @@ program
       evaluator: new Evaluator(
         { criteria: config.evaluation.criteria, passRules: config.evaluation.passRules },
         config.models.evaluator,
-        getStrategy(config.evaluation.strategy),
+        getStrategy(config.evaluation.strategy, config.evaluation),
         getApiKey,
       ),
       contractManager: new ContractManager(config.pipeline.contract, artifactsDir),
