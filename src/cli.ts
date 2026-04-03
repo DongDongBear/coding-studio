@@ -22,6 +22,7 @@ import { isValidMode, type PipelineMode } from "./pipeline/modes.js";
 import type { EvaluationStrategy } from "./strategies/types.js";
 import { waitForConfirmation } from "./interactive.js";
 import { CodingStudioTUI } from "./tui.js";
+import { ContractDrafterAgent } from "./agents/contract-drafter.js";
 import path from "node:path";
 import os from "node:os";
 
@@ -135,6 +136,11 @@ program
         { criteria: config.evaluation.criteria, passRules: config.evaluation.passRules },
         config.models.evaluator,
         getStrategy(config.evaluation.strategy, config.evaluation),
+        getApiKey,
+        process.cwd(),
+      ),
+      contractDrafter: new ContractDrafterAgent(
+        config.models.evaluator, // uses evaluator's model (GPT-5.4) for contract work
         getApiKey,
         process.cwd(),
       ),

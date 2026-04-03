@@ -3,19 +3,15 @@ import type { ArtifactStore } from "./artifacts/store.js";
 import type { EvalReport, PipelineStatus } from "./artifacts/types.js";
 import type { AgentStreamEvent } from "./agents/streaming.js";
 
-export interface ContractDrafter {
-  draftContract(cwd: string, spec: string, onOutput?: (chunk: string) => void): Promise<string>;
-  reviseContract(cwd: string, draft: string, feedback: string, onOutput?: (chunk: string) => void): Promise<string>;
-}
-
 export interface ContractReviewer {
   reviewContract(spec: string, draft: string): Promise<{ approved: boolean; feedback: string }>;
 }
 
 export interface OrchestratorDeps {
   planner: { plan(prompt: string, onEvent?: (e: AgentStreamEvent) => void): Promise<string> };
-  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> } & Partial<ContractDrafter>;
+  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> };
   evaluator: { evaluate(spec: string, contract: string, round: number, onEvent?: (e: AgentStreamEvent) => void): Promise<EvalReport> } & Partial<ContractReviewer>;
+  contractDrafter?: { draftContract(spec: string, onEvent?: (e: AgentStreamEvent) => void): Promise<string>; reviseContract(draft: string, feedback: string, onEvent?: (e: AgentStreamEvent) => void): Promise<string> };
   contractManager: {
     isEnabled(): boolean;
     saveDraft(content: string): void;
@@ -126,12 +122,16 @@ export class Orchestrator {
     if (steps.contract && this.deps.contractManager.isEnabled()) {
       this.emit({ type: "phase", phase: "contracting" });
 
-      if (this.deps.generator.draftContract && this.deps.evaluator.reviewContract) {
-        // Full agent-driven contract handshake
-        // Generator drafts (it knows the codebase), Evaluator reviews (it knows how to test)
-        this.emit({ type: "log", message: "Generator (CC) drafting contract based on repo state..." });
-        const ccOutput = (chunk: string) => this.emit({ type: "agent_text", agent: "generator", delta: chunk });
-        let draft = await this.deps.generator.draftContract(this.config.cwd, spec, ccOutput);
+      if (this.deps.contractDrafter && this.deps.evaluator.reviewContract) {
+        // Contract drafter reads codebase and proposes, Evaluator reviews testability
+        const streamContract = (e: AgentStreamEvent) => {
+          if (e.type === "text_delta") this.emit({ type: "agent_text", agent: "planner", delta: e.delta });
+          if (e.type === "tool_start") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "start", args: e.args });
+          if (e.type === "tool_end") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "end", result: e.result });
+        };
+
+        this.emit({ type: "log", message: "Drafting contract..." });
+        let draft = await this.deps.contractDrafter.draftContract(spec, streamContract);
         this.deps.contractManager.saveDraft(draft);
 
         // Review/revise loop
@@ -152,7 +152,7 @@ export class Orchestrator {
 
           this.emit({ type: "log", message: `Contract revision needed: ${review.feedback.slice(0, 100)}...` });
           this.deps.contractManager.recordRevision();
-          draft = await this.deps.generator.reviseContract!(this.config.cwd, draft, review.feedback, ccOutput);
+          draft = await this.deps.contractDrafter.reviseContract(draft, review.feedback, streamContract);
           this.deps.contractManager.saveDraft(draft);
         }
       } else {
