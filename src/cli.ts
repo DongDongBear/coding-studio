@@ -28,7 +28,10 @@ import path from "node:path";
 import os from "node:os";
 
 const AUTH_PATH = path.join(os.homedir(), ".coding-studio", "auth.json");
-const CONFIG_PATH = path.join(process.cwd(), ".coding-studio.yml");
+/** Always compute config path at call time — process.cwd() changes */
+function getConfigPath(): string {
+  return path.join(process.cwd(), ".coding-studio.yml");
+}
 
 function getStrategy(name: string, config: any): EvaluationStrategy {
   switch (name) {
@@ -118,7 +121,7 @@ program
   .option("-f, --full-auto", "Run fully autonomously — model decides everything, no pauses")
   .option("--no-tui", "Disable TUI even when stdout is a TTY (plain output)")
   .action(async (prompt, opts) => {
-    const config = loadConfig(CONFIG_PATH);
+    const config = loadConfig(getConfigPath());
     const authStorage = AuthStorage.create(AUTH_PATH);
     const rotator = new KeyRotator(authStorage);
     const getApiKey = (provider: string) => rotator.resolveKeyForProvider(provider);
@@ -319,7 +322,7 @@ program
   .command("resume")
   .description("Show resume info: pipeline status, last eval, and restore instructions")
   .action(() => {
-    const config = loadConfig(CONFIG_PATH);
+    const config = loadConfig(getConfigPath());
     const artifactsDir = path.resolve(process.cwd(), config.pipeline.artifactsDir);
     const artifactStore = new ArtifactStore(artifactsDir);
     const checkpointMgr = new CheckpointManager(config.generator.checkpoint, artifactsDir);
@@ -417,9 +420,8 @@ program
           tui.setStatus("Running pipeline...");
 
           // Must compute config path at runtime (not module load time)
-          // because cwd matters and CONFIG_PATH is stale
-          const runtimeConfigPath = path.join(process.cwd(), ".coding-studio.yml");
-          const config = loadConfig(runtimeConfigPath);
+          // because cwd matters and getConfigPath() is stale
+          const config = loadConfig(getConfigPath());
           tui.agentLog("system", `${config.models.planner.provider}/${config.models.planner.model} | cwd: ${process.cwd()}`);
           const authStorage = AuthStorage.create(AUTH_PATH);
           const rotator = new KeyRotator(authStorage);
@@ -517,7 +519,7 @@ program
         }
 
         case "status": {
-          const config = loadConfig(CONFIG_PATH);
+          const config = loadConfig(getConfigPath());
           const artifactsDir = path.resolve(
             process.cwd(),
             config.pipeline.artifactsDir,
