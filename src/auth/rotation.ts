@@ -35,7 +35,9 @@ export class KeyRotator {
       }
       const key = this.store.resolveKey(profileId);
       if (key) {
-        this.store.setLastGood(provider, profileId);
+        if (this.store.getLastGood(provider) !== profileId) {
+          this.store.setLastGood(provider, profileId);
+        }
         return key;
       }
     }

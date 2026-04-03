@@ -41,7 +41,7 @@ export function loadConfig(configPath: string): CodingStudioConfig {
   const interpolated = interpolateEnvVars(raw);
   const parsed = parseYaml(interpolated);
 
-  const merged = deepMerge(defaultConfig as unknown as Record<string, any>, parsed);
+  const merged = deepMerge(structuredClone(defaultConfig) as unknown as Record<string, any>, parsed);
 
   if (!Value.Check(CodingStudioConfigSchema, merged)) {
     const errors = [...Value.Errors(CodingStudioConfigSchema, merged)];
