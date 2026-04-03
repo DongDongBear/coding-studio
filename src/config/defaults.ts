@@ -59,7 +59,7 @@ export const defaultConfig: CodingStudioConfig = {
     },
   },
   pipeline: {
-    mode: "final-qa",
+    mode: "iterative-qa",
     interactive: false,
     artifactsDir: ".coding-studio/",
     resume: true,
