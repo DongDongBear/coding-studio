@@ -1,4 +1,4 @@
-import { getProviders, getModels, getModel } from "@mariozechner/pi-ai";
+import { getProviders, getModels, getModel, type KnownProvider } from "@mariozechner/pi-ai";
 
 export class ProviderRegistry {
   listProviders(): string[] {
@@ -12,8 +12,16 @@ export class ProviderRegistry {
     cost: { input: number; output: number };
     contextWindow: number;
   }> {
-    const models = getModels(provider);
-    return models.map((m: any) => ({
+    const providers: KnownProvider[] = provider
+      ? [provider as KnownProvider]
+      : getProviders();
+
+    const allModels: any[] = [];
+    for (const p of providers) {
+      allModels.push(...getModels(p));
+    }
+
+    return allModels.map((m: any) => ({
       id: m.id,
       name: m.name,
       provider: m.provider,
@@ -24,7 +32,8 @@ export class ProviderRegistry {
 
   resolveModel(provider: string, modelId: string) {
     try {
-      return getModel(provider, modelId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (getModel as any)(provider, modelId);
     } catch {
       return undefined;
     }
