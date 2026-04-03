@@ -76,10 +76,10 @@ export class Generator {
     return parts.join("\n");
   }
 
-  /** Build the CLI args array for claude */
-  buildArgs(prompt: string): string[] {
+  /** Build the CLI args array for claude (prompt passed via stdin, not -p) */
+  buildArgs(): string[] {
     const args: string[] = [
-      "-p", prompt,
+      "-p", "-",  // read prompt from stdin
       "--output-format", "stream-json",
       "--verbose",
       "--max-turns", String(this.config.maxTurns),
@@ -105,21 +105,27 @@ export class Generator {
     onOutput?: (chunk: string) => void,
   ): Promise<GeneratorResult> {
     const prompt = this.buildPrompt(spec, contract, evalFeedback);
-    const args = this.buildArgs(prompt);
-    return this.spawn(cwd, args, onOutput);
+    const args = this.buildArgs();
+    return this.spawn(cwd, args, onOutput, prompt);
   }
 
   // Contract drafting removed from Generator — now handled by ContractDrafterAgent (pi-agent-core)
 
-  private spawn(cwd: string, args: string[], onOutput?: (chunk: string) => void): Promise<GeneratorResult> {
+  private spawn(cwd: string, args: string[], onOutput?: (chunk: string) => void, stdinData?: string): Promise<GeneratorResult> {
     const startTime = Date.now();
     let output = "";
 
     return new Promise((resolve, reject) => {
       const proc = spawn(this.config.cliCommand, args, {
         cwd,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [stdinData ? "pipe" : "ignore", "pipe", "pipe"],
       });
+
+      // Pipe prompt via stdin to avoid OS arg length limits
+      if (stdinData && proc.stdin) {
+        proc.stdin.write(stdinData);
+        proc.stdin.end();
+      }
 
       proc.stdout?.on("data", (chunk: Buffer) => {
         const text = chunk.toString();

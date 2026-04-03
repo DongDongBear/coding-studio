@@ -82,32 +82,15 @@ export class Planner {
 
     const { getResult } = subscribeWithStreaming(agent, onEvent);
 
-    // Capture errors from agent event stream
-    let agentError: string | null = null;
-    agent.subscribe((event: any) => {
-      if (event.type === "error") {
-        agentError = event.error?.message ?? event.message ?? JSON.stringify(event);
-      }
-    });
-
-    // Also capture ALL events for debugging empty responses
-    let eventCount = 0;
-    let lastEventType = "";
-    agent.subscribe((event: any) => {
-      eventCount++;
-      lastEventType = event.type;
-    });
-
     try {
       await agent.prompt(userPrompt);
     } catch (err: any) {
-      throw new Error(`Planner API call failed: ${err.message}`);
+      throw new Error(`Planner API call failed (${this.modelConfig.provider}/${this.modelConfig.model}): ${err.message}`);
     }
 
     const result = getResult();
     if (!result.trim()) {
-      const detail = agentError ? ` Agent error: ${agentError}` : "";
-      throw new Error(`Planner returned empty response.${detail} Provider: ${this.modelConfig.provider}, Model: ${this.modelConfig.model}, Events received: ${eventCount}, Last event: ${lastEventType}`);
+      throw new Error(`Planner returned empty response. Provider: ${this.modelConfig.provider}, Model: ${this.modelConfig.model}`);
     }
 
     return result;

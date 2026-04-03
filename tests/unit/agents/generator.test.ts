@@ -72,9 +72,9 @@ describe("Generator", () => {
   });
 
   it("builds correct CLI args", () => {
-    const args = gen.buildArgs("test prompt");
+    const args = gen.buildArgs();
     expect(args).toContain("-p");
-    expect(args).toContain("test prompt");
+    expect(args).toContain("-"); // stdin mode
     expect(args).toContain("--output-format");
     expect(args).toContain("stream-json");
     expect(args).toContain("--max-turns");
