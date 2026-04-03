@@ -1,0 +1,90 @@
+models:
+  planner:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+  evaluator:
+    provider: openai
+    model: gpt-5.4
+
+generator:
+  cliCommand: claude
+  allowedTools:
+    - Edit
+    - Write
+    - Bash
+    - Read
+    - Glob
+    - Grep
+  mcpServers: []
+  maxTurns: 100
+  selfReview: true
+  checkpoint:
+    enabled: true
+    strategy: git-commit
+    everyRound: true
+
+runtime:
+  install:
+    command: npm install
+  build:
+    command: npm run build
+  start:
+    command: npm run dev -- --host 127.0.0.1 --port 5173
+    url: http://127.0.0.1:5173
+    readyPattern: "Local:"
+    timeoutSec: 90
+  healthcheck:
+    type: http
+    target: /
+  captureLogs: true
+
+evaluation:
+  mode: final-pass
+  strategy: composite
+  maxRounds: 3
+  criteriaProfile: app-default
+  criteria:
+    - name: functionality
+      weight: 1.0
+      description: Core features work correctly
+    - name: product_depth
+      weight: 1.0
+      description: Real depth, not demo/stub
+    - name: code_quality
+      weight: 1.0
+      description: Clean, maintainable, no integration risks
+    - name: design_quality
+      weight: 1.25
+      description: Visual coherence and quality
+    - name: craft
+      weight: 1.0
+      description: Typography, spacing, color execution
+    - name: originality
+      weight: 1.25
+      description: Intentional design choices, no AI slop
+  passRules:
+    overallScore: 7.5
+    minCriterionScore: 6.0
+    blockersFail: true
+    requiredCriteria:
+      - functionality
+      - product_depth
+      - code_quality
+
+planner:
+  ambitious: true
+  injectAIFeatures: true
+  techPreferences:
+    frontend: React + Vite + TailwindCSS
+    backend: FastAPI
+    database: SQLite
+
+pipeline:
+  mode: final-qa
+  interactive: false
+  artifactsDir: .coding-studio/
+  resume: true
+  stopOnBlocker: true
+  contract:
+    enabled: true
+    maxRevisions: 2

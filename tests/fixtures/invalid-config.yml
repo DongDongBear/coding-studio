@@ -1,0 +1,5 @@
+models:
+  planner:
+    provider: anthropic
+pipeline:
+  mode: not-a-real-mode
