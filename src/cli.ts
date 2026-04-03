@@ -112,6 +112,7 @@ program
   .description("Run the coding pipeline")
   .option("-m, --mode <mode>", "Pipeline mode: solo | plan-build | final-qa | iterative-qa")
   .option("-i, --interactive", "Pause at key checkpoints for confirmation")
+  .option("-f, --full-auto", "Run fully autonomously — model decides everything, no pauses")
   .action(async (prompt, opts) => {
     const config = loadConfig(CONFIG_PATH);
     const authStorage = AuthStorage.create(AUTH_PATH);
@@ -140,7 +141,15 @@ program
       artifactStore,
     };
 
-    const isInteractive = opts.interactive ?? config.pipeline.interactive;
+    // -f (full-auto) overrides everything: no pauses, model decides all
+    // -i (interactive) pauses at checkpoints
+    // default: from config
+    const isFullAuto = opts.fullAuto ?? false;
+    const isInteractive = isFullAuto ? false : (opts.interactive ?? config.pipeline.interactive);
+
+    if (isFullAuto) {
+      console.log("[Full-Auto Mode] Pipeline will run autonomously. Model decides everything.\n");
+    }
 
     const orchestrator = new Orchestrator(deps, {
       mode,
