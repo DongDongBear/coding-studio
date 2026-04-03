@@ -5,6 +5,7 @@ import { loadConfig } from "./config/loader.js";
 import { AuthProfileStore } from "./auth/profiles.js";
 import { KeyRotator } from "./auth/rotation.js";
 import { ProviderRegistry } from "./providers/registry.js";
+import { runSetup } from "./auth/setup.js";
 import path from "node:path";
 import os from "node:os";
 
@@ -104,12 +105,12 @@ program
     console.log("[Not yet implemented — see Phase 4]");
   });
 
-// --- setup (stub for Task 9) ---
+// --- setup ---
 program
   .command("setup")
   .description("Interactive credential setup")
-  .action(() => {
-    console.log("[Not yet implemented — see Task 9]");
+  .action(async () => {
+    await runSetup(AUTH_PROFILES_PATH);
   });
 
 program.parse();
