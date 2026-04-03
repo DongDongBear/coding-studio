@@ -178,6 +178,48 @@ export class Evaluator {
       summary: parsed.summary ?? "",
     };
   }
+
+  /** Review a contract draft for testability and completeness */
+  async reviewContract(spec: string, draft: string): Promise<{ approved: boolean; feedback: string }> {
+    const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
+
+    const agent = new Agent({
+      initialState: {
+        model,
+        systemPrompt: [
+          "You are reviewing an acceptance contract for completeness and testability.",
+          "Check whether:",
+          "- The acceptance criteria are specific and testable (not vague)",
+          "- All key features from the spec are covered",
+          "- The test plan covers critical user interactions",
+          "- Non-goals are clearly stated to prevent scope creep",
+          "",
+          "Respond with JSON only (no markdown fences):",
+          '{ "approved": true/false, "feedback": "your feedback" }',
+        ].join("\n"),
+      },
+      getApiKey: this.getApiKey,
+    });
+
+    let result = "";
+    agent.subscribe((event: any) => {
+      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+        result += event.assistantMessageEvent.delta;
+      }
+    });
+
+    await agent.prompt(`# Specification\n\n${spec}\n\n# Contract Draft\n\n${draft}`);
+
+    if (!result.trim()) {
+      return { approved: true, feedback: "No response from reviewer — auto-approving." };
+    }
+
+    const parsed = extractJSON(result);
+    return {
+      approved: parsed.approved ?? true,
+      feedback: parsed.feedback ?? "",
+    };
+  }
 }
 
 export { buildEvaluatorSystemPrompt };

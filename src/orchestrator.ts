@@ -2,13 +2,23 @@ import { getStepsForMode, type PipelineMode } from "./pipeline/modes.js";
 import type { ArtifactStore } from "./artifacts/store.js";
 import type { EvalReport, PipelineStatus } from "./artifacts/types.js";
 
+export interface ContractDrafter {
+  draftContract(spec: string): Promise<string>;
+  reviseContract(draft: string, feedback: string): Promise<string>;
+}
+
+export interface ContractReviewer {
+  reviewContract(spec: string, draft: string): Promise<{ approved: boolean; feedback: string }>;
+}
+
 export interface OrchestratorDeps {
   planner: { plan(prompt: string): Promise<string> };
-  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> };
-  evaluator: { evaluate(spec: string, contract: string, round: number): Promise<EvalReport> };
+  generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> } & Partial<ContractDrafter>;
+  evaluator: { evaluate(spec: string, contract: string, round: number): Promise<EvalReport> } & Partial<ContractReviewer>;
   contractManager: {
     isEnabled(): boolean;
     saveDraft(content: string): void;
+    saveReview(review: { approved: boolean; feedback: string }): void;
     finalize(): void;
     readContract(): string | undefined;
     canRevise(): boolean;
@@ -96,9 +106,40 @@ export class Orchestrator {
     // --- Contract ---
     if (steps.contract && this.deps.contractManager.isEnabled()) {
       this.emit({ type: "phase", phase: "contracting" });
-      // In a real implementation, Generator drafts the contract and Evaluator reviews it.
-      // For now, we use the spec as a basic contract.
-      this.deps.contractManager.saveDraft(`# Acceptance Contract\n\nBased on spec:\n${spec}`);
+
+      if (this.deps.generator.draftContract && this.deps.evaluator.reviewContract) {
+        // Full agent-driven contract handshake
+        this.emit({ type: "log", message: "Generator drafting contract..." });
+        let draft = await this.deps.generator.draftContract(spec);
+        this.deps.contractManager.saveDraft(draft);
+
+        // Review/revise loop
+        while (true) {
+          this.emit({ type: "log", message: "Evaluator reviewing contract..." });
+          const review = await this.deps.evaluator.reviewContract(spec, draft);
+          this.deps.contractManager.saveReview(review);
+
+          if (review.approved) {
+            this.emit({ type: "log", message: "Contract approved by Evaluator." });
+            break;
+          }
+
+          if (!this.deps.contractManager.canRevise()) {
+            this.emit({ type: "log", message: "Max contract revisions reached. Using current draft." });
+            break;
+          }
+
+          this.emit({ type: "log", message: `Contract revision needed: ${review.feedback.slice(0, 100)}...` });
+          this.deps.contractManager.recordRevision();
+          draft = await this.deps.generator.reviseContract!(draft, review.feedback);
+          this.deps.contractManager.saveDraft(draft);
+        }
+      } else {
+        // Fallback: use spec as basic contract
+        this.emit({ type: "log", message: "Agent-driven contract not available. Using spec as contract." });
+        this.deps.contractManager.saveDraft(`# Acceptance Contract\n\nBased on spec:\n${spec}`);
+      }
+
       this.deps.contractManager.finalize();
       contract = this.deps.contractManager.readContract() ?? "";
       this.deps.artifactStore.writeContract(contract);

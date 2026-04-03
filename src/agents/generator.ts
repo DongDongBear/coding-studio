@@ -139,4 +139,44 @@ export class Generator {
       });
     });
   }
+
+  /** Draft a contract from the spec (run via CC subprocess) */
+  async draftContract(spec: string): Promise<string> {
+    const prompt = [
+      "Based on the following product specification, draft an acceptance contract.",
+      "The contract should contain:",
+      "- scope: what this build delivers",
+      "- non-goals: what is explicitly out of scope",
+      "- acceptance criteria: specific, testable conditions for pass/fail",
+      "- test plan: key interactions, APIs, and data states to verify",
+      "",
+      "Output ONLY the contract in markdown. No preamble.",
+      "",
+      "# Specification",
+      "",
+      spec,
+    ].join("\n");
+
+    const result = await this.run(process.cwd(), prompt);
+    return result.output;
+  }
+
+  /** Revise a contract based on evaluator feedback */
+  async reviseContract(draft: string, feedback: string): Promise<string> {
+    const prompt = [
+      "Revise the following acceptance contract based on the reviewer's feedback.",
+      "Output ONLY the revised contract in markdown. No preamble.",
+      "",
+      "# Current Contract",
+      "",
+      draft,
+      "",
+      "# Reviewer Feedback",
+      "",
+      feedback,
+    ].join("\n");
+
+    const result = await this.run(process.cwd(), prompt);
+    return result.output;
+  }
 }

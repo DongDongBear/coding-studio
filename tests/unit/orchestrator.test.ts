@@ -21,6 +21,7 @@ function createMockDeps(artifactStore: ArtifactStore): OrchestratorDeps {
     contractManager: {
       isEnabled: vi.fn().mockReturnValue(true),
       saveDraft: vi.fn(),
+      saveReview: vi.fn(),
       finalize: vi.fn(),
       readContract: vi.fn().mockReturnValue("# Contract"),
       canRevise: vi.fn().mockReturnValue(true),
@@ -144,5 +145,39 @@ describe("Orchestrator", () => {
     expect(deps.generator.run).toHaveBeenCalledTimes(2);
     expect(status.history).toHaveLength(2);
     expect(status.phase).toBe("completed");
+  });
+
+  it("iterative-qa: runs full contract handshake when agents support it", async () => {
+    const deps = createMockDeps(store);
+    // Add contract drafting/reviewing capabilities
+    (deps.generator as any).draftContract = vi.fn().mockResolvedValue("# Draft Contract\n- AC1: Login works");
+    (deps.generator as any).reviseContract = vi.fn().mockResolvedValue("# Revised Contract\n- AC1: Login works\n- AC2: Logout works");
+    (deps.evaluator as any).reviewContract = vi.fn()
+      .mockResolvedValueOnce({ approved: false, feedback: "Missing logout test" })
+      .mockResolvedValueOnce({ approved: true, feedback: "Looks good now" });
+
+    const orch = new Orchestrator(deps, { mode: "iterative-qa", maxRounds: 1, interactive: false, cwd: tmpDir });
+    await orch.run("build auth system");
+
+    expect((deps.generator as any).draftContract).toHaveBeenCalledOnce();
+    expect((deps.evaluator as any).reviewContract).toHaveBeenCalledTimes(2);
+    expect((deps.generator as any).reviseContract).toHaveBeenCalledOnce();
+    expect(deps.contractManager.saveDraft).toHaveBeenCalledTimes(2); // draft + revision
+    expect(deps.contractManager.saveReview).toHaveBeenCalledTimes(2);
+    expect(deps.contractManager.recordRevision).toHaveBeenCalledOnce();
+    expect(deps.contractManager.finalize).toHaveBeenCalledOnce();
+  });
+
+  it("iterative-qa: falls back to spec-based contract when agents lack methods", async () => {
+    const deps = createMockDeps(store);
+    // No draftContract/reviewContract on agents
+    const orch = new Orchestrator(deps, { mode: "iterative-qa", maxRounds: 1, interactive: false, cwd: tmpDir });
+    const events: OrchestratorEvent[] = [];
+    orch.onEvent(e => events.push(e));
+    await orch.run("build something");
+
+    const logs = events.filter(e => e.type === "log").map(e => (e as any).message);
+    expect(logs.some((m: string) => m.includes("spec as contract"))).toBe(true);
+    expect(deps.contractManager.finalize).toHaveBeenCalledOnce();
   });
 });
