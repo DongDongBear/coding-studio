@@ -1,0 +1,30 @@
+{
+  "name": "coding-studio",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "coding-studio": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "latest",
+    "commander": "^13.0.0",
+    "yaml": "^2.7.0",
+    "@sinclair/typebox": "^0.34.0",
+    "@inquirer/prompts": "^7.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
