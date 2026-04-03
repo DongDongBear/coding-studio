@@ -1,0 +1,18 @@
+{
+  "round": 1,
+  "timestamp": "2026-04-03T12:00:00Z",
+  "verdict": "fail",
+  "overallScore": 6.2,
+  "contractCoverage": 0.7,
+  "scores": [
+    { "name": "functionality", "score": 5.0, "weight": 1.0, "feedback": "Core drag-drop broken" },
+    { "name": "design_quality", "score": 8.0, "weight": 1.25, "feedback": "Cohesive dark theme" }
+  ],
+  "blockers": [
+    { "severity": "critical", "description": "Entity wiring broken", "evidence": "Click entity - no response" }
+  ],
+  "bugs": [
+    { "severity": "major", "description": "Fill tool only fills endpoints", "location": "LevelEditor.tsx:892", "suggestedFix": "Call fillRectangle on mouseUp" }
+  ],
+  "summary": "Visual quality good but core interaction broken."
+}
