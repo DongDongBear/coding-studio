@@ -379,9 +379,17 @@ export class CodingStudioTUI {
       return;
     }
 
-    // Plain text = user feedback / steering
-    this.agentLog("user", value);
-    this.userMessages.push(value);
+    // Plain text behavior depends on pipeline state
+    if (this.running) {
+      // Pipeline running → queue as steering feedback
+      this.agentLog("user", value);
+      this.userMessages.push(value);
+      this.log("{#666-fg}  (feedback queued for next agent checkpoint){/#666-fg}");
+    } else {
+      // No pipeline → treat as /run command
+      this.agentLog("user", value);
+      this.onCommand?.("run", value);
+    }
   }
 
   /** Wait for user to press Enter (for pause/confirmation) */
