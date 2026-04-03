@@ -7,17 +7,50 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-/** Extract JSON from LLM output that may contain markdown fences or preamble */
+/** Try to repair truncated JSON (missing closing quotes/braces) */
+function repairJSON(text: string): string {
+  let s = text.trim();
+  // Count open/close braces and brackets
+  let braces = 0, brackets = 0, inString = false, escaped = false;
+  for (const ch of s) {
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") braces++;
+    if (ch === "}") braces--;
+    if (ch === "[") brackets++;
+    if (ch === "]") brackets--;
+  }
+  // If we're inside a string, close it
+  if (inString) s += '"';
+  // Close any open brackets/braces
+  while (brackets > 0) { s += "]"; brackets--; }
+  while (braces > 0) { s += "}"; braces--; }
+  return s;
+}
+
+/** Extract JSON from LLM output that may contain markdown fences, preamble, or be truncated */
 function extractJSON(text: string): any {
   const trimmed = text.trim();
+  // Direct parse
   try { return JSON.parse(trimmed); } catch {}
+  // Markdown fences
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) {
     try { return JSON.parse(fenceMatch[1].trim()); } catch {}
+    try { return JSON.parse(repairJSON(fenceMatch[1].trim())); } catch {}
   }
+  // First { ... } block
   const braceMatch = trimmed.match(/\{[\s\S]*\}/);
   if (braceMatch) {
     try { return JSON.parse(braceMatch[0]); } catch {}
+  }
+  // Find first { and try to repair truncated JSON
+  const firstBrace = trimmed.indexOf("{");
+  if (firstBrace >= 0) {
+    const partial = trimmed.slice(firstBrace);
+    try { return JSON.parse(repairJSON(partial)); } catch {}
   }
   throw new Error(`Failed to parse evaluator response as JSON: ${trimmed.slice(0, 200)}`);
 }
