@@ -449,6 +449,11 @@ program
               getApiKey,
               process.cwd(),
             ),
+            contractDrafter: new ContractDrafterAgent(
+              config.models.evaluator,
+              getApiKey,
+              process.cwd(),
+            ),
             contractManager: new ContractManager(
               config.pipeline.contract,
               artifactsDir,
