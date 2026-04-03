@@ -45,7 +45,7 @@ export class CheckpointManager {
     }
 
     const message = `checkpoint: round ${round} — ${description}`;
-    execSync(`git commit -m "${message}"`, { cwd, stdio: "pipe" });
+    execSync("git commit -m " + JSON.stringify(message), { cwd, stdio: "pipe" });
     const gitRef = execSync("git rev-parse HEAD", { cwd, stdio: "pipe" }).toString().trim();
 
     return this.saveMeta(round, gitRef, description);

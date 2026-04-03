@@ -58,8 +58,7 @@ export class RuntimeManager {
   async start(cwd: string): Promise<RuntimeState> {
     this.state = { status: "starting", logs: [], url: this.config.start.url };
 
-    const [cmd, ...args] = this.config.start.command.split(" ");
-    this.process = spawn(cmd, args, {
+    this.process = spawn(this.config.start.command, [], {
       cwd,
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -126,14 +125,13 @@ export class RuntimeManager {
 
   /** Stop the running process */
   stop(): void {
-    if (this.process && !this.process.killed) {
-      this.process.kill("SIGTERM");
-      // Force kill after 5 seconds if still alive
-      setTimeout(() => {
-        if (this.process && !this.process.killed) {
-          this.process.kill("SIGKILL");
-        }
+    const proc = this.process;
+    if (proc && !proc.killed) {
+      proc.kill("SIGTERM");
+      const timer = setTimeout(() => {
+        if (!proc.killed) proc.kill("SIGKILL");
       }, 5000);
+      timer.unref(); // don't block Node exit
     }
     this.state.status = "stopped";
     this.process = null;

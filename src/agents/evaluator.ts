@@ -3,6 +3,21 @@ import { getModel } from "@mariozechner/pi-ai";
 import type { EvaluationStrategy } from "../strategies/types.js";
 import type { EvalReport, EvalScore, Blocker, Bug } from "../artifacts/types.js";
 
+/** Extract JSON from LLM output that may contain markdown fences or preamble */
+function extractJSON(text: string): any {
+  const trimmed = text.trim();
+  try { return JSON.parse(trimmed); } catch {}
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    try { return JSON.parse(fenceMatch[1].trim()); } catch {}
+  }
+  const braceMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try { return JSON.parse(braceMatch[0]); } catch {}
+  }
+  throw new Error(`Failed to parse evaluator response as JSON: ${trimmed.slice(0, 200)}`);
+}
+
 export interface EvaluatorModelConfig {
   provider: string;
   model: string;
@@ -137,8 +152,8 @@ export class Evaluator {
     const evalPrompt = `Evaluate the project.\n\n## Specification:\n${spec}\n\n## Contract:\n${contract}`;
     await agent.prompt(evalPrompt);
 
-    // Parse the LLM's JSON response
-    const parsed = JSON.parse(result.trim());
+    // Parse the LLM's JSON response with fallback extraction
+    const parsed = extractJSON(result);
 
     // Apply our own pass/fail logic (don't trust the LLM's verdict blindly)
     const { verdict, overallScore } = evaluatePassFail(
