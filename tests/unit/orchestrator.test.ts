@@ -70,7 +70,7 @@ describe("Orchestrator", () => {
     const deps = createMockDeps(store);
     const orch = new Orchestrator(deps, { mode: "plan-build", maxRounds: 1, interactive: false, cwd: tmpDir });
     const status = await orch.run("build an app");
-    expect(deps.planner.plan).toHaveBeenCalledWith("build an app");
+    expect(deps.planner.plan).toHaveBeenCalledWith("build an app", expect.any(Function));
     expect(deps.generator.run).toHaveBeenCalledOnce();
     expect(deps.evaluator.evaluate).not.toHaveBeenCalled();
     expect(status.phase).toBe("completed");

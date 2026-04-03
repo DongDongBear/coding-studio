@@ -1,6 +1,7 @@
 import { getStepsForMode, type PipelineMode } from "./pipeline/modes.js";
 import type { ArtifactStore } from "./artifacts/store.js";
 import type { EvalReport, PipelineStatus } from "./artifacts/types.js";
+import type { AgentStreamEvent } from "./agents/streaming.js";
 
 export interface ContractDrafter {
   draftContract(cwd: string, spec: string): Promise<string>;
@@ -12,9 +13,9 @@ export interface ContractReviewer {
 }
 
 export interface OrchestratorDeps {
-  planner: { plan(prompt: string): Promise<string> };
+  planner: { plan(prompt: string, onEvent?: (e: AgentStreamEvent) => void): Promise<string> };
   generator: { run(cwd: string, spec: string, contract?: string, evalFeedback?: EvalReport, onOutput?: (chunk: string) => void): Promise<{ exitCode: number | null; output: string; duration: number }> } & Partial<ContractDrafter>;
-  evaluator: { evaluate(spec: string, contract: string, round: number): Promise<EvalReport> } & Partial<ContractReviewer>;
+  evaluator: { evaluate(spec: string, contract: string, round: number, onEvent?: (e: AgentStreamEvent) => void): Promise<EvalReport> } & Partial<ContractReviewer>;
   contractManager: {
     isEnabled(): boolean;
     saveDraft(content: string): void;
@@ -52,6 +53,8 @@ export type OrchestratorEvent =
   | { type: "phase"; phase: PipelineStatus["phase"] }
   | { type: "round"; round: number }
   | { type: "log"; message: string }
+  | { type: "agent_text"; agent: "planner" | "generator" | "evaluator"; delta: string }
+  | { type: "tool_use"; agent: "planner" | "generator" | "evaluator"; tool: string; status: "start" | "end"; args?: string; result?: string }
   | { type: "eval"; report: EvalReport }
   | { type: "pause"; reason: string }
   | { type: "complete"; status: PipelineStatus };
@@ -93,7 +96,11 @@ export class Orchestrator {
     if (steps.plan) {
       this.emit({ type: "phase", phase: "planning" });
       this.emit({ type: "log", message: "Running Planner..." });
-      spec = await this.deps.planner.plan(userPrompt);
+      spec = await this.deps.planner.plan(userPrompt, (e) => {
+        if (e.type === "text_delta") this.emit({ type: "agent_text", agent: "planner", delta: e.delta });
+        if (e.type === "tool_start") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "start", args: e.args });
+        if (e.type === "tool_end") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "end", result: e.result });
+      });
       this.deps.artifactStore.writeSpec(spec);
       this.emit({ type: "log", message: "Spec generated." });
 
@@ -190,7 +197,7 @@ export class Orchestrator {
         spec,
         contract || undefined,
         lastReport,
-        (chunk) => this.emit({ type: "log", message: chunk }),
+        (chunk) => this.emit({ type: "agent_text", agent: "generator", delta: chunk }),
       );
       const buildDuration = (Date.now() - buildStart) / 1000;
 
@@ -217,7 +224,11 @@ export class Orchestrator {
         this.emit({ type: "log", message: `Evaluating round ${round}...` });
 
         const evalStart = Date.now();
-        const report = await this.deps.evaluator.evaluate(spec, contract || spec, round);
+        const report = await this.deps.evaluator.evaluate(spec, contract || spec, round, (e) => {
+          if (e.type === "text_delta") this.emit({ type: "agent_text", agent: "evaluator", delta: e.delta });
+          if (e.type === "tool_start") this.emit({ type: "tool_use", agent: "evaluator", tool: e.tool, status: "start", args: e.args });
+          if (e.type === "tool_end") this.emit({ type: "tool_use", agent: "evaluator", tool: e.tool, status: "end", result: e.result });
+        });
         const evalDuration = (Date.now() - evalStart) / 1000;
 
         this.deps.artifactStore.writeEvalReport(report);

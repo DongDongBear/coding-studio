@@ -1,6 +1,7 @@
 import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, getModel } from "@mariozechner/pi-ai";
 import type { EvaluationStrategy } from "../strategies/types.js";
+import { subscribeWithStreaming, type AgentStreamEvent } from "./streaming.js";
 import type { EvalReport, EvalScore, Blocker, Bug } from "../artifacts/types.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -222,7 +223,7 @@ export class Evaluator {
     return [readFileTool, listFilesTool, searchTool, runCommandTool];
   }
 
-  async evaluate(spec: string, contract: string, round: number): Promise<EvalReport> {
+  async evaluate(spec: string, contract: string, round: number, onEvent?: (event: AgentStreamEvent) => void): Promise<EvalReport> {
     const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
 
     const tools = [...this.getBuiltinTools(), ...this.strategy.getTools()];
@@ -236,16 +237,12 @@ export class Evaluator {
       getApiKey: this.getApiKey,
     });
 
-    let result = "";
-    agent.subscribe((event: any) => {
-      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-        result += event.assistantMessageEvent.delta;
-      }
-    });
+    const { getResult } = subscribeWithStreaming(agent, onEvent);
 
     const evalPrompt = `Evaluate the project.\n\n## Specification:\n${spec}\n\n## Contract:\n${contract}`;
     await agent.prompt(evalPrompt);
 
+    const result = getResult();
     if (!result.trim()) {
       throw new Error("Evaluator returned empty response. Check model configuration and API key.");
     }

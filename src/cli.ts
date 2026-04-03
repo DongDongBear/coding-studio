@@ -160,33 +160,90 @@ program
       onPause: isInteractive ? waitForConfirmation : undefined,
     });
 
+    // ANSI colors
+    const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
+    const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
+    const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+    const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
+    const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
+    const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+    const magenta = (s: string) => `\x1b[35m${s}\x1b[0m`;
+
+    let currentAgent = "";
+
     orchestrator.onEvent((event) => {
       switch (event.type) {
         case "phase":
-          console.log(`\n--- Phase: ${event.phase} ---`);
+          process.stdout.write(`\n${bold(`--- ${event.phase.toUpperCase()} ---`)}\n`);
+          currentAgent = "";
           break;
+
         case "round":
-          console.log(`\n=== Round ${event.round} ===`);
+          process.stdout.write(`\n${bold(yellow(`=== Round ${event.round} ===`))}\n`);
           break;
+
         case "log":
-          console.log(event.message);
+          process.stdout.write(`${dim(event.message)}\n`);
           break;
-        case "eval":
-          console.log(`\nEval: ${event.report.verdict} (${event.report.overallScore.toFixed(1)}/10)`);
+
+        case "agent_text": {
+          // Show agent label on first output
+          if (currentAgent !== event.agent) {
+            currentAgent = event.agent;
+            const label = event.agent === "planner" ? cyan("Planner")
+              : event.agent === "generator" ? yellow("Generator (CC)")
+              : magenta("Evaluator");
+            process.stdout.write(`\n${bold(label)}:\n`);
+          }
+          process.stdout.write(event.delta);
+          break;
+        }
+
+        case "tool_use": {
+          if (event.status === "start") {
+            const argsPreview = event.args ? dim(` ${event.args.slice(0, 80)}`) : "";
+            process.stdout.write(`\n  ${cyan(">")} ${bold(event.tool)}${argsPreview}\n`);
+          } else {
+            const resultPreview = event.result ? dim(`  ${event.result.slice(0, 120)}`) : "";
+            if (resultPreview) process.stdout.write(`${resultPreview}\n`);
+          }
+          break;
+        }
+
+        case "eval": {
+          const v = event.report.verdict === "pass" ? green("PASS") : red("FAIL");
+          process.stdout.write(`\n${bold("Eval Result")}: ${v} (${event.report.overallScore.toFixed(1)}/10)\n`);
+          for (const s of event.report.scores) {
+            const bar = s.score >= 7 ? green(`${s.score}`) : s.score >= 5 ? yellow(`${s.score}`) : red(`${s.score}`);
+            process.stdout.write(`  ${s.name.padEnd(18)} ${bar}/10  ${dim(s.feedback.slice(0, 60))}\n`);
+          }
           if (event.report.blockers.length > 0) {
-            console.log("Blockers:");
+            process.stdout.write(`${red("Blockers:")}\n`);
             for (const b of event.report.blockers) {
-              console.log(`  [${b.severity}] ${b.description}`);
+              process.stdout.write(`  ${red(`[${b.severity}]`)} ${b.description}\n`);
+            }
+          }
+          if (event.report.bugs.length > 0) {
+            process.stdout.write(`${yellow("Bugs:")}\n`);
+            for (const bug of event.report.bugs.slice(0, 5)) {
+              const loc = bug.location ? dim(` (${bug.location})`) : "";
+              process.stdout.write(`  ${yellow(`[${bug.severity}]`)}${loc} ${bug.description}\n`);
             }
           }
           break;
+        }
+
         case "pause":
-          console.log(`\n[PAUSE] ${event.reason}`);
-          // TODO: in interactive mode, wait for user input
+          process.stdout.write(`\n${yellow("[PAUSE]")} ${event.reason}\n`);
           break;
-        case "complete":
-          console.log(`\n✓ Pipeline complete (${event.status.mode}, ${event.status.history.length} rounds)`);
+
+        case "complete": {
+          const h = event.status.history;
+          const lastScore = h.length > 0 ? h[h.length - 1].score?.toFixed(1) ?? "N/A" : "N/A";
+          const totalTime = h.reduce((s, r) => s + r.buildDuration + (r.evalDuration ?? 0), 0);
+          process.stdout.write(`\n${green("✓")} ${bold("Pipeline complete")} (${event.status.mode}, ${h.length} rounds, ${totalTime.toFixed(0)}s, score: ${lastScore})\n`);
           break;
+        }
       }
     });
 

@@ -1,5 +1,6 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
+import { subscribeWithStreaming, type AgentStreamEvent } from "./streaming.js";
 
 export interface PlannerConfig {
   ambitious: boolean;
@@ -67,7 +68,7 @@ export class Planner {
   }
 
   /** Run the planner to generate a spec from a user prompt */
-  async plan(userPrompt: string): Promise<string> {
+  async plan(userPrompt: string, onEvent?: (event: AgentStreamEvent) => void): Promise<string> {
     const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
 
     const agent = new Agent({
@@ -78,15 +79,10 @@ export class Planner {
       getApiKey: this.getApiKey,
     });
 
-    let result = "";
-    agent.subscribe((event: any) => {
-      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-        result += event.assistantMessageEvent.delta;
-      }
-    });
-
+    const { getResult } = subscribeWithStreaming(agent, onEvent);
     await agent.prompt(userPrompt);
 
+    const result = getResult();
     if (!result.trim()) {
       throw new Error("Planner returned empty response. Check model configuration and API key.");
     }

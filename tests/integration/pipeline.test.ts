@@ -196,7 +196,7 @@ pipeline:
     const status = await orch.run("Build a todo app");
 
     // Verify pipeline ran correctly
-    expect(mockPlanner.plan).toHaveBeenCalledWith("Build a todo app");
+    expect(mockPlanner.plan).toHaveBeenCalledWith("Build a todo app", expect.any(Function));
     expect(mockGenerator.run).toHaveBeenCalledOnce();
     expect(mockEvaluator.evaluate).toHaveBeenCalledOnce();
     expect(status.phase).toBe("completed");
