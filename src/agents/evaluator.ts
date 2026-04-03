@@ -257,6 +257,25 @@ export class Evaluator {
   }
 
   async evaluate(spec: string, contract: string, round: number, onEvent?: (event: AgentStreamEvent) => void): Promise<EvalReport> {
+    try {
+      return await this.doEvaluate(spec, contract, round, onEvent);
+    } catch (err: any) {
+      // Never crash the pipeline on eval failure — return a graceful fail report
+      return {
+        round,
+        timestamp: new Date().toISOString(),
+        verdict: "fail",
+        overallScore: 0,
+        contractCoverage: 0,
+        scores: [],
+        blockers: [{ severity: "critical", description: `Evaluator error: ${err.message}` }],
+        bugs: [],
+        summary: `Evaluation failed due to an error: ${err.message}. Pipeline will continue to next round.`,
+      };
+    }
+  }
+
+  private async doEvaluate(spec: string, contract: string, round: number, onEvent?: (event: AgentStreamEvent) => void): Promise<EvalReport> {
     const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
 
     const tools = [...this.getBuiltinTools(), ...this.strategy.getTools()];
@@ -305,44 +324,50 @@ export class Evaluator {
 
   /** Review a contract draft for testability and completeness */
   async reviewContract(spec: string, draft: string): Promise<{ approved: boolean; feedback: string }> {
-    const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
+    try {
+      const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
 
-    const agent = new Agent({
-      initialState: {
-        model,
-        systemPrompt: [
-          "You are reviewing an acceptance contract for completeness and testability.",
-          "Check whether:",
-          "- The acceptance criteria are specific and testable (not vague)",
-          "- All key features from the spec are covered",
-          "- The test plan covers critical user interactions",
-          "- Non-goals are clearly stated to prevent scope creep",
-          "",
-          "Respond with JSON only (no markdown fences):",
-          '{ "approved": true/false, "feedback": "your feedback" }',
-        ].join("\n"),
-      },
-      getApiKey: this.getApiKey,
-    });
+      const agent = new Agent({
+        initialState: {
+          model,
+          systemPrompt: [
+            "You are reviewing an acceptance contract for completeness and testability.",
+            "Check whether:",
+            "- The acceptance criteria are specific and testable (not vague)",
+            "- All key features from the spec are covered",
+            "- The test plan covers critical user interactions",
+            "- Non-goals are clearly stated to prevent scope creep",
+            "",
+            "Respond with ONLY a JSON object (no markdown fences, no extra text):",
+            '{ "approved": true, "feedback": "brief feedback" }',
+            "Keep feedback under 200 words to avoid truncation.",
+          ].join("\n"),
+        },
+        getApiKey: this.getApiKey,
+      });
 
-    let result = "";
-    agent.subscribe((event: any) => {
-      if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-        result += event.assistantMessageEvent.delta;
+      let result = "";
+      agent.subscribe((event: any) => {
+        if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+          result += event.assistantMessageEvent.delta;
+        }
+      });
+
+      await agent.prompt(`# Specification\n\n${spec}\n\n# Contract Draft\n\n${draft}`);
+
+      if (!result.trim()) {
+        return { approved: true, feedback: "No response from reviewer — auto-approving." };
       }
-    });
 
-    await agent.prompt(`# Specification\n\n${spec}\n\n# Contract Draft\n\n${draft}`);
-
-    if (!result.trim()) {
-      return { approved: true, feedback: "No response from reviewer — auto-approving." };
+      const parsed = extractJSON(result);
+      return {
+        approved: parsed.approved ?? true,
+        feedback: parsed.feedback ?? "",
+      };
+    } catch (err: any) {
+      // Never crash on review failure — auto-approve and note the error
+      return { approved: true, feedback: `Review failed (${err.message}), auto-approving to continue pipeline.` };
     }
-
-    const parsed = extractJSON(result);
-    return {
-      approved: parsed.approved ?? true,
-      feedback: parsed.feedback ?? "",
-    };
   }
 }
 

@@ -8,6 +8,9 @@ export class CodingStudioTUI {
   private outputArea: blessed.Widgets.Log;
   private inputBox: blessed.Widgets.TextboxElement;
   private userMessages: string[] = [];
+  private textBuffer: Map<string, string> = new Map(); // agent → buffered text
+  private lastAgent = "";
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private onCommand?: (cmd: string, args: string) => void;
 
@@ -112,11 +115,7 @@ export class CodingStudioTUI {
     this.screen.render();
   }
 
-  /** Log with agent-specific formatting */
-  agentLog(
-    agent: "planner" | "generator" | "evaluator" | "user" | "system",
-    text: string,
-  ): void {
+  private getAgentLabel(agent: string): string {
     const labels: Record<string, string> = {
       planner: "{cyan-fg}{bold}[Planner]{/bold}{/cyan-fg}",
       generator: "{yellow-fg}{bold}[Generator]{/bold}{/yellow-fg}",
@@ -124,8 +123,57 @@ export class CodingStudioTUI {
       user: "{green-fg}{bold}[User]{/bold}{/green-fg}",
       system: "{blue-fg}{bold}[System]{/bold}{/blue-fg}",
     };
-    const label = labels[agent] ?? `{white-fg}[${agent}]{/white-fg}`;
-    this.log(`${label} ${text}`);
+    return labels[agent] ?? `{white-fg}[${agent}]{/white-fg}`;
+  }
+
+  /** Log a complete message with agent label */
+  agentLog(
+    agent: "planner" | "generator" | "evaluator" | "user" | "system",
+    text: string,
+  ): void {
+    this.flushTextBuffer(); // flush any streaming in progress
+    this.log(`${this.getAgentLabel(agent)} ${text}`);
+  }
+
+  /** Stream a text delta — buffers and flushes complete lines */
+  agentStreamDelta(agent: string, delta: string): void {
+    // Print agent header on switch
+    if (this.lastAgent !== agent) {
+      this.flushTextBuffer();
+      this.log(`\n${this.getAgentLabel(agent)}`);
+      this.lastAgent = agent;
+    }
+
+    const buf = (this.textBuffer.get(agent) ?? "") + delta;
+    this.textBuffer.set(agent, buf);
+
+    // Flush complete lines
+    const lines = buf.split("\n");
+    if (lines.length > 1) {
+      // All but the last are complete lines
+      for (let i = 0; i < lines.length - 1; i++) {
+        this.log(`  ${lines[i]}`);
+      }
+      this.textBuffer.set(agent, lines[lines.length - 1]);
+    }
+
+    // Debounced flush for partial lines (after 100ms of no new deltas)
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => this.flushTextBuffer(), 100);
+  }
+
+  /** Flush any remaining text in the buffer */
+  private flushTextBuffer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    for (const [agent, buf] of this.textBuffer) {
+      if (buf.trim()) {
+        this.log(`  ${buf}`);
+      }
+    }
+    this.textBuffer.clear();
   }
 
   /** Log a tool call */
@@ -225,7 +273,7 @@ export class CodingStudioTUI {
         this.log(`{#666-fg}${event.message}{/#666-fg}`);
         break;
       case "agent_text":
-        this.agentLog(event.agent, event.delta.replace(/\n/g, "\n  "));
+        this.agentStreamDelta(event.agent, event.delta);
         break;
       case "tool_use":
         this.toolLog(
