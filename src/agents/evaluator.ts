@@ -1,7 +1,10 @@
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
+import { Agent, type AgentTool } from "@mariozechner/pi-agent-core";
+import { Type, getModel } from "@mariozechner/pi-ai";
 import type { EvaluationStrategy } from "../strategies/types.js";
 import type { EvalReport, EvalScore, Blocker, Bug } from "../artifacts/types.js";
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
 
 /** Extract JSON from LLM output that may contain markdown fences or preamble */
 function extractJSON(text: string): any {
@@ -113,31 +116,122 @@ export class Evaluator {
   private modelConfig: EvaluatorModelConfig;
   private strategy: EvaluationStrategy;
   private getApiKey: (provider: string) => Promise<string | undefined>;
+  private cwd: string;
 
   constructor(
     evalConfig: EvaluatorConfig,
     modelConfig: EvaluatorModelConfig,
     strategy: EvaluationStrategy,
     getApiKey: (provider: string) => Promise<string | undefined>,
+    cwd: string = process.cwd(),
   ) {
     this.evalConfig = evalConfig;
     this.modelConfig = modelConfig;
     this.strategy = strategy;
     this.getApiKey = getApiKey;
+    this.cwd = cwd;
   }
 
   getSystemPrompt(): string {
     return buildEvaluatorSystemPrompt(this.evalConfig, this.strategy);
   }
 
+  /** Built-in tools that let the Evaluator inspect the project */
+  private getBuiltinTools(): AgentTool[] {
+    const cwd = this.cwd;
+
+    const readFileTool: AgentTool = {
+      name: "read_file",
+      label: "Read File",
+      description: "Read a file from the project. Use relative paths from the project root.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Relative file path to read" }),
+      }),
+      execute: async (_id, params: any) => {
+        try {
+          const fullPath = path.resolve(cwd, params.path);
+          const content = fs.readFileSync(fullPath, "utf-8");
+          return { content: [{ type: "text", text: content }], details: {} };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error reading file: ${err.message}` }], details: {} };
+        }
+      },
+    };
+
+    const listFilesTool: AgentTool = {
+      name: "list_files",
+      label: "List Files",
+      description: "List files in a directory. Use relative paths. Returns file names.",
+      parameters: Type.Object({
+        path: Type.Optional(Type.String({ description: "Relative directory path (default: project root)" })),
+        recursive: Type.Optional(Type.Boolean({ description: "List recursively (default: false)" })),
+      }),
+      execute: async (_id, params: any) => {
+        try {
+          const dir = path.resolve(cwd, params.path ?? ".");
+          const cmd = params.recursive
+            ? `find "${dir}" -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | head -200`
+            : `ls -la "${dir}"`;
+          const output = execSync(cmd, { cwd, stdio: "pipe", timeout: 10000 }).toString();
+          return { content: [{ type: "text", text: output }], details: {} };
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], details: {} };
+        }
+      },
+    };
+
+    const searchTool: AgentTool = {
+      name: "search_code",
+      label: "Search Code",
+      description: "Search for a pattern in project files using grep. Returns matching lines.",
+      parameters: Type.Object({
+        pattern: Type.String({ description: "Search pattern (regex supported)" }),
+        glob: Type.Optional(Type.String({ description: "File glob filter, e.g. '*.ts'" })),
+      }),
+      execute: async (_id, params: any) => {
+        try {
+          const globArg = params.glob ? `--include='${params.glob}'` : "";
+          const cmd = `grep -rn ${globArg} '${params.pattern.replace(/'/g, "\\'")}' . --exclude-dir=node_modules --exclude-dir=.git | head -100`;
+          const output = execSync(cmd, { cwd, stdio: "pipe", timeout: 10000 }).toString();
+          return { content: [{ type: "text", text: output || "No matches found." }], details: {} };
+        } catch {
+          return { content: [{ type: "text", text: "No matches found." }], details: {} };
+        }
+      },
+    };
+
+    const runCommandTool: AgentTool = {
+      name: "run_command",
+      label: "Run Command",
+      description: "Run a shell command in the project directory. Use for: npm test, curl, etc.",
+      parameters: Type.Object({
+        command: Type.String({ description: "Shell command to run" }),
+      }),
+      execute: async (_id, params: any) => {
+        try {
+          const output = execSync(params.command, { cwd, stdio: "pipe", timeout: 30000 }).toString();
+          return { content: [{ type: "text", text: output }], details: {} };
+        } catch (err: any) {
+          const stderr = err.stderr?.toString() ?? "";
+          const stdout = err.stdout?.toString() ?? "";
+          return { content: [{ type: "text", text: `Exit ${err.status}\n${stdout}\n${stderr}` }], details: {} };
+        }
+      },
+    };
+
+    return [readFileTool, listFilesTool, searchTool, runCommandTool];
+  }
+
   async evaluate(spec: string, contract: string, round: number): Promise<EvalReport> {
     const model = getModel(this.modelConfig.provider as any, this.modelConfig.model as any);
+
+    const tools = [...this.getBuiltinTools(), ...this.strategy.getTools()];
 
     const agent = new Agent({
       initialState: {
         model,
         systemPrompt: this.getSystemPrompt(),
-        tools: this.strategy.getTools(),
+        tools,
       },
       getApiKey: this.getApiKey,
     });

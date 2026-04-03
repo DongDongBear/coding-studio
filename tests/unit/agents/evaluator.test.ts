@@ -35,9 +35,13 @@ vi.mock("@mariozechner/pi-agent-core", () => ({
   }),
 }));
 
-vi.mock("@mariozechner/pi-ai", () => ({
-  getModel: vi.fn(() => ({ id: "test-model", provider: "test" })),
-}));
+vi.mock("@mariozechner/pi-ai", async () => {
+  const actual = await vi.importActual("@mariozechner/pi-ai");
+  return {
+    ...actual,
+    getModel: vi.fn(() => ({ id: "test-model", provider: "test" })),
+  };
+});
 
 const testEvalConfig: EvaluatorConfig = {
   criteria: [

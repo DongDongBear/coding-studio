@@ -134,6 +134,7 @@ program
         config.models.evaluator,
         getStrategy(config.evaluation.strategy, config.evaluation),
         getApiKey,
+        process.cwd(),
       ),
       contractManager: new ContractManager(config.pipeline.contract, artifactsDir),
       runtimeManager: new RuntimeManager(config.runtime),

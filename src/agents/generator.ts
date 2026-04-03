@@ -81,6 +81,7 @@ export class Generator {
     const args: string[] = [
       "-p", prompt,
       "--output-format", "stream-json",
+      "--verbose",
       "--max-turns", String(this.config.maxTurns),
     ];
 
