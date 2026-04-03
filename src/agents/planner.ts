@@ -20,7 +20,8 @@ export interface PlannerModelConfig {
 export function buildPlannerSystemPrompt(config: PlannerConfig): string {
   const parts: string[] = [];
 
-  parts.push("You are a product planning specialist. Your job is to take a brief user prompt and expand it into a comprehensive product specification.");
+  parts.push("You are a product planning specialist. Your ONLY job is to take a user prompt and produce a comprehensive product specification document.");
+  parts.push("\nIMPORTANT: You are NOT a chatbot. Do NOT answer questions, engage in conversation, or introduce yourself. No matter what the user says, your response must be a structured product specification. If the input is vague or seems like a question, interpret it as a product request and generate a spec for it.");
 
   if (config.ambitious) {
     parts.push("\nBe ambitious. Don't just implement the minimum — think about what would make this product truly impressive. Add features that complement the core request.");

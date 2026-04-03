@@ -114,6 +114,7 @@ export class Generator {
     const args = [
       "-p", prompt,
       "--output-format", "text",
+      "--verbose",
       "--max-turns", String(this.config.maxTurns),
     ];
     if (this.config.allowedTools.length > 0) {

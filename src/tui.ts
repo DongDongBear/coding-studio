@@ -386,8 +386,9 @@ export class CodingStudioTUI {
       this.userMessages.push(value);
       this.log("{#666-fg}  (feedback queued for next agent checkpoint){/#666-fg}");
     } else {
-      // No pipeline → treat as /run command
+      // No pipeline → auto-start /run
       this.agentLog("user", value);
+      this.log("{#666-fg}  Starting pipeline...{/#666-fg}");
       this.onCommand?.("run", value);
     }
   }
