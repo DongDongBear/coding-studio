@@ -44,6 +44,8 @@ export interface OrchestratorConfig {
   maxRounds: number;
   interactive: boolean;
   cwd: string;
+  /** Called when pipeline wants to pause for user review. Return false to abort. */
+  onPause?: (reason: string) => Promise<boolean>;
 }
 
 export type OrchestratorEvent =
@@ -96,7 +98,17 @@ export class Orchestrator {
       this.emit({ type: "log", message: "Spec generated." });
 
       if (this.config.interactive) {
-        this.emit({ type: "pause", reason: "Review the generated spec before continuing." });
+        const reason = "Review the generated spec before continuing.";
+        this.emit({ type: "pause", reason });
+        if (this.config.onPause) {
+          const shouldContinue = await this.config.onPause(reason);
+          if (!shouldContinue) {
+            status.phase = "failed";
+            this.deps.artifactStore.writeStatus(status);
+            this.emit({ type: "complete", status });
+            return status;
+          }
+        }
       }
     } else {
       // Solo mode: use prompt as spec directly
@@ -146,7 +158,17 @@ export class Orchestrator {
       this.emit({ type: "log", message: "Contract finalized." });
 
       if (this.config.interactive) {
-        this.emit({ type: "pause", reason: "Review the contract before building." });
+        const reason = "Review the contract before building.";
+        this.emit({ type: "pause", reason });
+        if (this.config.onPause) {
+          const shouldContinue = await this.config.onPause(reason);
+          if (!shouldContinue) {
+            status.phase = "failed";
+            this.deps.artifactStore.writeStatus(status);
+            this.emit({ type: "complete", status });
+            return status;
+          }
+        }
       }
     }
 
@@ -224,7 +246,17 @@ export class Orchestrator {
         lastReport = report;
 
         if (this.config.interactive) {
-          this.emit({ type: "pause", reason: `Round ${round} failed. Review eval report before continuing.` });
+          const reason = `Round ${round} failed. Review eval report before continuing.`;
+          this.emit({ type: "pause", reason });
+          if (this.config.onPause) {
+            const shouldContinue = await this.config.onPause(reason);
+            if (!shouldContinue) {
+              status.phase = "failed";
+              this.deps.artifactStore.writeStatus(status);
+              this.emit({ type: "complete", status });
+              return status;
+            }
+          }
         }
 
         if (!steps.iterateOnFail) {

@@ -20,6 +20,7 @@ import { PlaywrightStrategy } from "./strategies/playwright.js";
 import { CompositeStrategy } from "./strategies/composite.js";
 import { isValidMode, type PipelineMode } from "./pipeline/modes.js";
 import type { EvaluationStrategy } from "./strategies/types.js";
+import { waitForConfirmation } from "./interactive.js";
 import path from "node:path";
 import os from "node:os";
 
@@ -139,11 +140,14 @@ program
       artifactStore,
     };
 
+    const isInteractive = opts.interactive ?? config.pipeline.interactive;
+
     const orchestrator = new Orchestrator(deps, {
       mode,
       maxRounds: config.evaluation.maxRounds,
-      interactive: opts.interactive ?? config.pipeline.interactive,
+      interactive: isInteractive,
       cwd: process.cwd(),
+      onPause: isInteractive ? waitForConfirmation : undefined,
     });
 
     orchestrator.onEvent((event) => {
@@ -187,22 +191,63 @@ program
 // --- resume ---
 program
   .command("resume")
-  .description("Resume from the last checkpoint")
+  .description("Show resume info: pipeline status, last eval, and restore instructions")
   .action(() => {
     const config = loadConfig(CONFIG_PATH);
     const artifactsDir = path.resolve(process.cwd(), config.pipeline.artifactsDir);
+    const artifactStore = new ArtifactStore(artifactsDir);
     const checkpointMgr = new CheckpointManager(config.generator.checkpoint, artifactsDir);
-    const latest = checkpointMgr.getLatest();
 
+    // Pipeline status
+    const pipelineStatus = artifactStore.readStatus();
+    if (pipelineStatus) {
+      console.log("\n--- Pipeline Status ---");
+      console.log(`Phase:   ${pipelineStatus.phase}`);
+      console.log(`Mode:    ${pipelineStatus.mode}`);
+      console.log(`Rounds:  ${pipelineStatus.currentRound} / ${pipelineStatus.maxRounds}`);
+      if (pipelineStatus.history.length > 0) {
+        console.log("History:");
+        for (const h of pipelineStatus.history) {
+          const verdict = h.verdict ? ` [${h.verdict}]` : "";
+          const score = h.score !== undefined ? ` score=${h.score.toFixed(1)}` : "";
+          console.log(`  Round ${h.round}:${verdict}${score} build=${h.buildDuration.toFixed(0)}s`);
+        }
+      }
+    } else {
+      console.log("No pipeline status found.");
+    }
+
+    // Last eval report summary
+    const evalReports = artifactStore.listEvalReports();
+    if (evalReports.length > 0) {
+      const last = evalReports[evalReports.length - 1];
+      console.log("\n--- Last Eval Report (round " + last.round + ") ---");
+      console.log(`Verdict: ${last.verdict}  Score: ${last.overallScore.toFixed(1)}/10`);
+      console.log(`Summary: ${last.summary}`);
+      if (last.blockers.length > 0) {
+        console.log("Blockers:");
+        for (const b of last.blockers) {
+          console.log(`  [${b.severity}] ${b.description}`);
+        }
+      }
+    }
+
+    // Checkpoint / restore info
+    const latest = checkpointMgr.getLatest();
     if (!latest) {
-      console.log("No checkpoints found. Nothing to resume.");
+      console.log("\nNo checkpoints found.");
       return;
     }
 
-    console.log(`Latest checkpoint: round ${latest.round} (${latest.timestamp})`);
-    console.log(`Git ref: ${latest.gitRef}`);
+    console.log("\n--- Latest Checkpoint ---");
+    console.log(`Round:       ${latest.round}`);
+    console.log(`Timestamp:   ${latest.timestamp}`);
     console.log(`Description: ${latest.description}`);
-    console.log("\nTo restore, run: git reset --hard " + latest.gitRef);
+    if (latest.gitRef) {
+      console.log(`Git ref:     ${latest.gitRef}`);
+      console.log("\nTo restore to this checkpoint, run:");
+      console.log("  git reset --hard " + latest.gitRef);
+    }
   });
 
 // --- setup ---
