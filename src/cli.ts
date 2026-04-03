@@ -416,6 +416,7 @@ program
           tui.setStatus("Running pipeline...");
 
           const config = loadConfig(CONFIG_PATH);
+          tui.agentLog("system", `Config: ${CONFIG_PATH}, Planner: ${config.models.planner.provider}/${config.models.planner.model}`);
           const authStorage = AuthStorage.create(AUTH_PATH);
           const rotator = new KeyRotator(authStorage);
           const getApiKey = (provider: string) =>
