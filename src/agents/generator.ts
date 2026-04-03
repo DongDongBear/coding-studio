@@ -109,18 +109,59 @@ export class Generator {
     return this.spawn(cwd, args, onOutput);
   }
 
-  /** Run CC with plain text output (for non-coding tasks like contract drafting) */
-  async runText(cwd: string, prompt: string, onOutput?: (chunk: string) => void): Promise<GeneratorResult> {
+  /**
+   * Run CC with stream-json and parse events to extract assistant text.
+   * Used for non-coding tasks (contract drafting) where we want streaming
+   * progress AND the final text output.
+   */
+  async runStreaming(cwd: string, prompt: string, onOutput?: (chunk: string) => void): Promise<GeneratorResult> {
     const args = [
       "-p", prompt,
-      "--output-format", "text",
+      "--output-format", "stream-json",
       "--verbose",
       "--max-turns", String(this.config.maxTurns),
     ];
     if (this.config.allowedTools.length > 0) {
       args.push("--allowedTools", this.config.allowedTools.join(","));
     }
-    return this.spawn(cwd, args, onOutput);
+
+    let assistantText = "";
+    let lineBuf = "";
+
+    const result = await this.spawn(cwd, args, (raw) => {
+      // Parse NDJSON stream: each line is a JSON event
+      lineBuf += raw;
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop() ?? ""; // keep incomplete last line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+
+          if (event.type === "assistant" && event.subtype === "text") {
+            // Streaming text delta from assistant
+            assistantText += event.text ?? "";
+            onOutput?.(event.text ?? "");
+          } else if (event.type === "tool_use") {
+            // Tool call started
+            onOutput?.(`\n> ${event.tool ?? "tool"}: ${JSON.stringify(event.input ?? {}).slice(0, 100)}\n`);
+          } else if (event.type === "result") {
+            // Final result — use this as the complete text
+            if (event.result) assistantText = event.result;
+          }
+        } catch {
+          // Not valid JSON — pass raw line as output for visibility
+          onOutput?.(line);
+        }
+      }
+    });
+
+    // Override output with parsed assistant text
+    return {
+      ...result,
+      output: assistantText || result.output,
+    };
   }
 
   /** Draft a contract — CC reads the repo state and proposes what it can deliver */
@@ -143,7 +184,7 @@ export class Generator {
       spec,
     ].join("\n");
 
-    const result = await this.runText(cwd, prompt, onOutput);
+    const result = await this.runStreaming(cwd, prompt, onOutput);
     return result.output;
   }
 
@@ -163,7 +204,7 @@ export class Generator {
       feedback,
     ].join("\n");
 
-    const result = await this.runText(cwd, prompt, onOutput);
+    const result = await this.runStreaming(cwd, prompt, onOutput);
     return result.output;
   }
 
