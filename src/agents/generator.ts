@@ -110,21 +110,20 @@ export class Generator {
   }
 
   /** Run CC with plain text output (for non-coding tasks like contract drafting) */
-  async runText(cwd: string, prompt: string): Promise<GeneratorResult> {
+  async runText(cwd: string, prompt: string, onOutput?: (chunk: string) => void): Promise<GeneratorResult> {
     const args = [
       "-p", prompt,
       "--output-format", "text",
       "--max-turns", String(this.config.maxTurns),
     ];
-    // Contract drafting needs CC to read the codebase
     if (this.config.allowedTools.length > 0) {
       args.push("--allowedTools", this.config.allowedTools.join(","));
     }
-    return this.spawn(cwd, args);
+    return this.spawn(cwd, args, onOutput);
   }
 
   /** Draft a contract — CC reads the repo state and proposes what it can deliver */
-  async draftContract(cwd: string, spec: string): Promise<string> {
+  async draftContract(cwd: string, spec: string, onOutput?: (chunk: string) => void): Promise<string> {
     const prompt = [
       "You are about to build a project. Based on the specification below and the current state of the repository,",
       "draft an acceptance contract that describes what you will deliver.",
@@ -143,12 +142,12 @@ export class Generator {
       spec,
     ].join("\n");
 
-    const result = await this.runText(cwd, prompt);
+    const result = await this.runText(cwd, prompt, onOutput);
     return result.output;
   }
 
   /** Revise a contract based on evaluator feedback */
-  async reviseContract(cwd: string, draft: string, feedback: string): Promise<string> {
+  async reviseContract(cwd: string, draft: string, feedback: string, onOutput?: (chunk: string) => void): Promise<string> {
     const prompt = [
       "Revise the following acceptance contract based on the reviewer's feedback.",
       "You may read the repository to check what's feasible.",
@@ -163,7 +162,7 @@ export class Generator {
       feedback,
     ].join("\n");
 
-    const result = await this.runText(cwd, prompt);
+    const result = await this.runText(cwd, prompt, onOutput);
     return result.output;
   }
 

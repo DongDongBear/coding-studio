@@ -4,8 +4,8 @@ import type { EvalReport, PipelineStatus } from "./artifacts/types.js";
 import type { AgentStreamEvent } from "./agents/streaming.js";
 
 export interface ContractDrafter {
-  draftContract(cwd: string, spec: string): Promise<string>;
-  reviseContract(cwd: string, draft: string, feedback: string): Promise<string>;
+  draftContract(cwd: string, spec: string, onOutput?: (chunk: string) => void): Promise<string>;
+  reviseContract(cwd: string, draft: string, feedback: string, onOutput?: (chunk: string) => void): Promise<string>;
 }
 
 export interface ContractReviewer {
@@ -130,7 +130,8 @@ export class Orchestrator {
         // Full agent-driven contract handshake
         // Generator drafts (it knows the codebase), Evaluator reviews (it knows how to test)
         this.emit({ type: "log", message: "Generator (CC) drafting contract based on repo state..." });
-        let draft = await this.deps.generator.draftContract(this.config.cwd, spec);
+        const ccOutput = (chunk: string) => this.emit({ type: "agent_text", agent: "generator", delta: chunk });
+        let draft = await this.deps.generator.draftContract(this.config.cwd, spec, ccOutput);
         this.deps.contractManager.saveDraft(draft);
 
         // Review/revise loop
@@ -151,7 +152,7 @@ export class Orchestrator {
 
           this.emit({ type: "log", message: `Contract revision needed: ${review.feedback.slice(0, 100)}...` });
           this.deps.contractManager.recordRevision();
-          draft = await this.deps.generator.reviseContract!(this.config.cwd, draft, review.feedback);
+          draft = await this.deps.generator.reviseContract!(this.config.cwd, draft, review.feedback, ccOutput);
           this.deps.contractManager.saveDraft(draft);
         }
       } else {
