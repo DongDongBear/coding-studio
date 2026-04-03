@@ -1,5 +1,5 @@
 import { select, input, password, confirm } from "@inquirer/prompts";
-import { AuthProfileStore } from "./profiles.js";
+import type { AuthStorage } from "@mariozechner/pi-coding-agent";
 
 const KNOWN_PROVIDERS = [
   { name: "Anthropic", value: "anthropic" },
@@ -11,14 +11,13 @@ const KNOWN_PROVIDERS = [
 
 const AUTH_METHODS = [
   { name: "API Key (paste your key)", value: "api_key" },
-  { name: "Setup Token (from claude setup-token)", value: "token" },
+  { name: "Setup Token (OAuth token from claude setup-token)", value: "token" },
   { name: "Environment Variable (reference)", value: "env_ref" },
 ];
 
-export async function runSetup(profilesPath: string): Promise<void> {
+export async function runSetup(authStorage: AuthStorage): Promise<void> {
   console.log("\nWelcome to Coding Studio!\n");
 
-  const store = new AuthProfileStore(profilesPath);
   let addMore = true;
 
   while (addMore) {
@@ -32,34 +31,18 @@ export async function runSetup(profilesPath: string): Promise<void> {
       choices: AUTH_METHODS,
     });
 
-    const profileName = await input({
-      message: "Profile name (e.g. main, backup):",
-      default: "main",
-    });
-
-    const profileId = `${provider}:${profileName}`;
-
     if (method === "api_key") {
       const key = await password({
         message: `Paste your ${provider} API key:`,
       });
-      store.addProfile(profileId, { type: "api_key", provider, key });
-      console.log(`\u2713 Saved ${profileId} to auth-profiles.json`);
+      authStorage.set(provider, { type: "api_key", key });
+      console.log(`\u2713 Saved ${provider} credential`);
     } else if (method === "token") {
       const token = await password({
-        message: `Paste your ${provider} setup token:`,
+        message: `Paste your ${provider} OAuth/setup token:`,
       });
-      const expiresIn = await input({
-        message: "Token expires (ISO date, or leave blank for no expiry):",
-        default: "",
-      });
-      store.addProfile(profileId, {
-        type: "token",
-        provider,
-        token,
-        ...(expiresIn ? { expires: expiresIn } : {}),
-      });
-      console.log(`\u2713 Saved ${profileId} to auth-profiles.json`);
+      authStorage.set(provider, { type: "api_key", key: token });
+      console.log(`\u2713 Saved ${provider} token (pi will auto-detect OAuth via sk-ant-oat prefix)`);
     } else if (method === "env_ref") {
       const envVar = await input({
         message: "Environment variable name:",
@@ -67,8 +50,8 @@ export async function runSetup(profilesPath: string): Promise<void> {
       });
       const currentValue = process.env[envVar];
       if (currentValue) {
-        store.addProfile(profileId, { type: "api_key", provider, key: currentValue });
-        console.log(`\u2713 Resolved $${envVar} and saved ${profileId}`);
+        authStorage.set(provider, { type: "api_key", key: currentValue });
+        console.log(`\u2713 Resolved $${envVar} and saved for ${provider}`);
       } else {
         console.log(`\u2717 $${envVar} is not set. Skipping.`);
       }
@@ -78,12 +61,12 @@ export async function runSetup(profilesPath: string): Promise<void> {
   }
 
   // Summary
-  console.log("\nConfigured profiles:");
-  const profiles = store.listProfiles();
-  for (const { id, profile } of profiles) {
-    const keyPreview = store.resolveKey(id);
-    const masked = keyPreview ? keyPreview.slice(0, 8) + "..." : "N/A";
-    console.log(`  ${profile.provider.padEnd(14)} ${id.padEnd(24)} ${profile.type.padEnd(10)} ${masked}`);
+  console.log("\nConfigured providers:");
+  const all = authStorage.getAll();
+  for (const [provider, cred] of Object.entries(all)) {
+    const key = await authStorage.getApiKey(provider);
+    const masked = key ? key.slice(0, 8) + "..." : "N/A";
+    console.log(`  ${provider.padEnd(14)} ${cred.type.padEnd(10)} ${masked}`);
   }
 
   console.log("\nSetup complete! Run `coding-studio run \"your prompt\"` to start.\n");

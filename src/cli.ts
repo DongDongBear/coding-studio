@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig } from "./config/loader.js";
-import { AuthProfileStore } from "./auth/profiles.js";
-import { KeyRotator } from "./auth/rotation.js";
+import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import { ProviderRegistry } from "./providers/registry.js";
 import { runSetup } from "./auth/setup.js";
 import path from "node:path";
 import os from "node:os";
 
-const AUTH_PROFILES_PATH = path.join(os.homedir(), ".coding-studio", "auth-profiles.json");
-const CONFIG_PATH = path.join(process.cwd(), ".coding-studio.yml");
+const AUTH_PATH = path.join(os.homedir(), ".coding-studio", "auth.json");
 
 const program = new Command();
 
@@ -25,37 +22,30 @@ const modelsCmd = program.command("models").description("Manage model providers 
 modelsCmd
   .command("status")
   .description("Check credential status for all configured providers")
-  .action(() => {
-    const store = new AuthProfileStore(AUTH_PROFILES_PATH);
-    const profiles = store.listProfiles();
+  .action(async () => {
+    const authStorage = AuthStorage.create(AUTH_PATH);
+    const all = authStorage.getAll();
+    const providers = Object.keys(all);
 
-    if (profiles.length === 0) {
+    if (providers.length === 0) {
       console.log("No credentials configured. Run `coding-studio setup` to get started.");
       return;
     }
 
     console.log(
       "Provider".padEnd(14) +
-        "Profile".padEnd(24) +
-        "Type".padEnd(10) +
+        "Type".padEnd(12) +
         "Status",
     );
-    console.log("-".repeat(58));
+    console.log("-".repeat(40));
 
-    for (const { id, profile } of profiles) {
-      let status = "OK";
-      if (profile.type === "token" && profile.expires) {
-        const expires = new Date(profile.expires);
-        if (expires < new Date()) {
-          status = "EXPIRED";
-        } else {
-          const daysLeft = Math.ceil((expires.getTime() - Date.now()) / 86_400_000);
-          status = daysLeft <= 7 ? `Expires in ${daysLeft}d` : "OK";
-        }
-      }
-      const mark = status === "OK" || status.startsWith("Expires") ? "\u2713" : "\u2717";
+    for (const provider of providers) {
+      const cred = all[provider];
+      const key = await authStorage.getApiKey(provider);
+      const status = key ? "OK" : "FAILED";
+      const mark = key ? "\u2713" : "\u2717";
       console.log(
-        `${profile.provider.padEnd(14)}${id.padEnd(24)}${profile.type.padEnd(10)}${mark} ${status}`,
+        `${provider.padEnd(14)}${cred.type.padEnd(12)}${mark} ${status}`,
       );
     }
   });
@@ -110,7 +100,8 @@ program
   .command("setup")
   .description("Interactive credential setup")
   .action(async () => {
-    await runSetup(AUTH_PROFILES_PATH);
+    const authStorage = AuthStorage.create(AUTH_PATH);
+    await runSetup(authStorage);
   });
 
 program.parse();

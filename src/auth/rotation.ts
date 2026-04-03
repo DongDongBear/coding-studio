@@ -1,59 +1,43 @@
+import type { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { RateLimitInfo } from "./types.js";
-import type { AuthProfileStore } from "./profiles.js";
 
+/**
+ * Wraps pi's AuthStorage with rate-limit tracking.
+ * AuthStorage already handles: stored keys > OAuth token refresh > env vars.
+ * KeyRotator adds: live env override + rate-limit cooldown per provider.
+ */
 export class KeyRotator {
-  private store: AuthProfileStore;
+  private authStorage: AuthStorage;
   private rateLimits: Map<string, RateLimitInfo> = new Map();
 
-  constructor(store: AuthProfileStore) {
-    this.store = store;
+  constructor(authStorage: AuthStorage) {
+    this.authStorage = authStorage;
   }
 
-  resolveKeyForProvider(provider: string): string | undefined {
-    // Priority 1: Live env override
+  async resolveKeyForProvider(provider: string): Promise<string | undefined> {
+    // Priority 1: Live env override (coding-studio specific)
     const liveEnvKey = `CODING_STUDIO_LIVE_${provider.toUpperCase()}_KEY`;
     if (process.env[liveEnvKey]) {
       return process.env[liveEnvKey];
     }
 
-    // Priority 2: Profile store (lastGood first, then order)
-    const order = this.store.getProviderOrder(provider);
-    const lastGood = this.store.getLastGood(provider);
-
-    const sortedOrder = lastGood && order.includes(lastGood)
-      ? [lastGood, ...order.filter((id) => id !== lastGood)]
-      : order;
-
+    // Priority 2: Check rate-limit cooldown
+    const limit = this.rateLimits.get(provider);
     const now = Date.now();
-    for (const profileId of sortedOrder) {
-      const limit = this.rateLimits.get(profileId);
-      if (limit && limit.cooldownUntil > now) {
-        continue;
-      }
-      if (limit) {
-        this.rateLimits.delete(profileId);
-      }
-      const key = this.store.resolveKey(profileId);
-      if (key) {
-        if (this.store.getLastGood(provider) !== profileId) {
-          this.store.setLastGood(provider, profileId);
-        }
-        return key;
-      }
+    if (limit && limit.cooldownUntil > now) {
+      return undefined;
+    }
+    if (limit) {
+      this.rateLimits.delete(provider);
     }
 
-    // Priority 3: Generic env var fallback
-    const genericEnvKey = `${provider.toUpperCase()}_API_KEY`;
-    if (process.env[genericEnvKey]) {
-      return process.env[genericEnvKey];
-    }
-
-    return undefined;
+    // Priority 3: pi AuthStorage (handles stored keys, OAuth refresh, env fallback)
+    return this.authStorage.getApiKey(provider);
   }
 
-  markRateLimited(profileId: string, cooldownMs: number): void {
-    this.rateLimits.set(profileId, {
-      profileId,
+  markRateLimited(provider: string, cooldownMs: number): void {
+    this.rateLimits.set(provider, {
+      provider,
       cooldownUntil: Date.now() + cooldownMs,
     });
   }
