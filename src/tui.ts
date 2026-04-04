@@ -60,31 +60,54 @@ export class CodingStudioTUI {
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
   private promptVisible = false;
-  private externalUIActive = false; // true when inquirer/external UI has stdin
+  private externalUIActive = false;
   private historyFile: string;
+  private spinnerTimer: ReturnType<typeof setInterval> | null = null;
+  private spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  private spinnerIdx = 0;
+  private ctrlCPressed = false; // double-press detection
 
   constructor() {
     // Load input history (like Claude Code's history.ts)
     this.historyFile = path.join(process.cwd(), ".coding-studio", "input-history.json");
     const history = this.loadHistory();
 
+    // Tab completion for slash commands
     this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-      history,
-      historySize: 100,
-    });
+      ...{ input: process.stdin, output: process.stdout, terminal: true, history, historySize: 100 },
+      completer: (line: string) => {
+        const commands = ["/run", "/resume", "/agent", "/status", "/abort", "/quit", "/fold", "/unfold", "/clear"];
+        if (line.startsWith("/")) {
+          const hits = commands.filter((c) => c.startsWith(line));
+          return [hits.length ? hits : commands, line];
+        }
+        return [[], line];
+      },
+    } as any);
 
     this.rl.on("line", (line) => {
       this.promptVisible = false;
+      this.ctrlCPressed = false;
       const trimmed = line.trim();
       if (trimmed) this.saveToHistory(trimmed);
       this.handleInput(trimmed);
       this.showPrompt();
     });
 
+    // Double Ctrl+C to exit (like Claude Code)
     this.rl.on("close", () => process.exit(0));
+    this.rl.on("SIGINT", () => {
+      if (this.ctrlCPressed) {
+        process.stdout.write("\n");
+        process.exit(0);
+      }
+      this.ctrlCPressed = true;
+      this.out(`  ${DIM}Press Ctrl+C again to exit${RESET}`);
+      setTimeout(() => { this.ctrlCPressed = false; }, 2000);
+    });
+
+    // Set terminal title
+    process.stdout.write("\x1b]0;Coding Studio\x07");
 
     // Welcome
     console.log("");
@@ -257,6 +280,47 @@ export class CodingStudioTUI {
     this.showPrompt();
   }
 
+  // ── Spinner (like Claude Code's Spinner component) ──
+
+  startSpinner(label: string): void {
+    this.stopSpinner();
+    this.spinnerIdx = 0;
+    const render = () => {
+      const frame = this.spinnerFrames[this.spinnerIdx % this.spinnerFrames.length];
+      this.spinnerIdx++;
+      const elapsed = this.fmtElapsed();
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      process.stdout.write(`  ${FG.cyan}${frame}${RESET} ${DIM}${label}${RESET} ${DIM}${elapsed}${RESET}`);
+    };
+    render();
+    this.spinnerTimer = setInterval(render, 80);
+  }
+
+  stopSpinner(): void {
+    if (this.spinnerTimer) {
+      clearInterval(this.spinnerTimer);
+      this.spinnerTimer = null;
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+    }
+  }
+
+  // ── Markdown-lite rendering ──
+
+  /** Simple markdown highlighting for output text */
+  static mdHighlight(text: string): string {
+    return text
+      // Headers
+      .replace(/^(#{1,3}) (.+)$/gm, `${BOLD}$1 $2${RESET}`)
+      // Bold
+      .replace(/\*\*(.+?)\*\*/g, `${BOLD}$1${RESET}`)
+      // Inline code
+      .replace(/`([^`]+)`/g, `${FG.cyan}$1${RESET}`)
+      // Bullet points
+      .replace(/^(\s*[-*]) /gm, `${FG.cyan}$1${RESET} `);
+  }
+
   // ── Public API ──
 
   setCommandHandler(handler: (cmd: string, args: string) => void): void {
@@ -362,6 +426,8 @@ export class CodingStudioTUI {
   }
 
   destroy(): void {
+    this.stopSpinner();
+    process.stdout.write("\x1b]0;\x07"); // restore terminal title
     this.rl.close();
   }
 
@@ -376,6 +442,8 @@ export class CodingStudioTUI {
   // ── Streaming text ──
 
   agentStreamDelta(agent: string, delta: string): void {
+    this.stopSpinner(); // stop any running spinner when text arrives
+
     if (this.lastAgent !== agent) {
       this.flushTextBuffer();
       const a = AGENTS[agent] ?? AGENTS.system;
@@ -388,7 +456,7 @@ export class CodingStudioTUI {
     const lines = this.textBuffer.split("\n");
     if (lines.length > 1) {
       for (let i = 0; i < lines.length - 1; i++) {
-        this.out(`  ${DIM}│${RESET} ${lines[i]}`);
+        this.out(`  ${DIM}│${RESET} ${CodingStudioTUI.mdHighlight(lines[i])}`);
       }
       this.textBuffer = lines[lines.length - 1];
     }
@@ -410,9 +478,14 @@ export class CodingStudioTUI {
   private toolLog(agent: string, tool: string, status: "start" | "end", detail?: string): void {
     const a = AGENTS[agent] ?? AGENTS.system;
     if (status === "start") {
+      this.stopSpinner();
       this.out(`  ${DIM}│${RESET} ${c(a.color, "▸")} ${BOLD}${tool}${RESET} ${detail ? DIM + detail + RESET : ""}`);
-    } else if (detail) {
-      this.out(`  ${DIM}│  └ ${detail}${RESET}`);
+      this.startSpinner(`${tool}...`);
+    } else {
+      this.stopSpinner();
+      if (detail) {
+        this.out(`  ${DIM}│  └ ${detail}${RESET}`);
+      }
     }
   }
 
@@ -529,6 +602,7 @@ export class CodingStudioTUI {
   handleOrchestratorEvent(event: OrchestratorEvent): void {
     switch (event.type) {
       case "phase": {
+        this.stopSpinner();
         this.flushTextBuffer();
         this.lastAgent = "";
         this.currentPhase = event.phase;
@@ -536,6 +610,8 @@ export class CodingStudioTUI {
         const a = event.phase === "building" ? "yellow" : event.phase === "evaluating" ? "magenta" : "cyan";
         this.out("");
         this.out(`  ${c(a as keyof typeof FG, `${icon} ━━━ ${event.phase.toUpperCase()} ━━━━━━━━━━━━━━━━━━━━`, true)}`);
+        // Update terminal title
+        process.stdout.write(`\x1b]0;Coding Studio · ${event.phase}\x07`);
         break;
       }
       case "round":
