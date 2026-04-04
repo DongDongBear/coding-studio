@@ -105,17 +105,14 @@ export class CodingStudioTUI {
    */
   private out(text: string): void {
     if (this.promptVisible) {
-      // Cursor is on input line (row 2 of 4: top-sep, INPUT, bot-sep, hint)
-      // Move to top sep and erase all 4 lines
+      // Erase separator line + prompt line (2 lines)
+      readline.moveCursor(process.stdout, 0, -1);
+      readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      readline.moveCursor(process.stdout, 0, -1); // top sep
-      for (let i = 0; i < 4; i++) {
-        readline.clearLine(process.stdout, 0);
-        if (i < 3) readline.moveCursor(process.stdout, 0, 1);
-      }
-      // Move back to where top sep was
-      readline.moveCursor(process.stdout, 0, -3);
+      readline.moveCursor(process.stdout, 0, 1);
+      readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, -1);
     }
     process.stdout.write(text + "\n");
     this.showPrompt();
@@ -123,22 +120,16 @@ export class CodingStudioTUI {
 
   private showPrompt(): void {
     const cols = process.stdout.columns || 80;
-    const top = `${DIM}${"─".repeat(cols)}${RESET}`;
-    const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
     const hint = this.running
-      ? `${DIM}pipeline running · type to chat with planner${RESET}`
-      : `${DIM}↑↓ history · /run /resume /agent /quit${RESET}`;
-    const bottom = `${DIM}${"─".repeat(cols)}${RESET}`;
+      ? "type to chat with planner"
+      : "↑↓ history · /run /resume /agent /quit";
+    const pad = Math.max(0, cols - hint.length - 2);
+    const sep = `${DIM}${"─".repeat(Math.min(pad, 4))} ${hint} ${"─".repeat(Math.max(0, pad - 4))}${RESET}`;
+    const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
 
-    process.stdout.write(top + "\n");
+    process.stdout.write(sep + "\n");
     this.rl.setPrompt(` ${icon} `);
     this.rl.prompt(true);
-    // Write bottom separator after prompt (on next line)
-    process.stdout.write("\n" + bottom + "\n" + ` ${hint}`);
-    // Move cursor back up to the input line
-    readline.moveCursor(process.stdout, 0, -2);
-    // Position cursor after the prompt prefix
-    readline.cursorTo(process.stdout, 4);
     this.promptVisible = true;
   }
 
