@@ -279,19 +279,8 @@ export class Orchestrator {
 
         lastReport = report;
 
-        if (this.config.interactive) {
-          const reason = `Round ${round} failed. Review eval report before continuing.`;
-          this.emit({ type: "pause", reason });
-          if (this.config.onPause) {
-            const shouldContinue = await this.config.onPause(reason);
-            if (!shouldContinue) {
-              status.phase = "failed";
-              this.deps.artifactStore.writeStatus(status);
-              this.emit({ type: "complete", status });
-              return status;
-            }
-          }
-        }
+        // No pause between rounds — just log and continue
+        this.emit({ type: "log", message: `Round ${round} failed (${report.overallScore.toFixed(1)}/10). Continuing to next round...` });
 
         if (!steps.iterateOnFail) {
           // final-qa: only one eval pass, don't loop
