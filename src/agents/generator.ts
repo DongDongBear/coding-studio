@@ -73,6 +73,12 @@ export class Generator {
       parts.push("\n\n# Self-Review Requirement\n\nBefore finishing, review your own work. Check that all acceptance criteria are met, test core functionality, and verify there are no obvious bugs.");
     }
 
+    parts.push("\n\n# Test Output Rules");
+    parts.push("- All test result files (screenshots, reports, logs) MUST go into `.coding-studio/test-results/` directory.");
+    parts.push("- Do NOT create `test-results/` or `test-result/` in the project root.");
+    parts.push("- After tests pass, clean up any temporary test artifacts (screenshots, trace files) from `.coding-studio/test-results/`.");
+    parts.push("- Test source code (test/*.test.js etc.) stays in the project, but test OUTPUT goes in .coding-studio/.");
+
     return parts.join("\n");
   }
 

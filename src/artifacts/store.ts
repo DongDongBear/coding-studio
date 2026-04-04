@@ -10,19 +10,24 @@ export class ArtifactStore {
     this.ensureGitignore();
   }
 
-  /** Ensure .coding-studio/ is in .gitignore */
+  /** Ensure .coding-studio/ and test-results/ are in .gitignore */
   private ensureGitignore(): void {
     const projectRoot = path.dirname(this.dir);
     const gitignorePath = path.join(projectRoot, ".gitignore");
-    const entry = path.basename(this.dir) + "/";
+    const entries = [path.basename(this.dir) + "/", "test-results/"];
     try {
-      if (fs.existsSync(gitignorePath)) {
-        const content = fs.readFileSync(gitignorePath, "utf-8");
+      let content = fs.existsSync(gitignorePath)
+        ? fs.readFileSync(gitignorePath, "utf-8")
+        : "";
+      let changed = false;
+      for (const entry of entries) {
         if (!content.includes(entry)) {
-          fs.appendFileSync(gitignorePath, `\n${entry}\n`);
+          content += `\n${entry}`;
+          changed = true;
         }
-      } else {
-        fs.writeFileSync(gitignorePath, `${entry}\n`);
+      }
+      if (changed) {
+        fs.writeFileSync(gitignorePath, content.trimEnd() + "\n");
       }
     } catch {
       // Non-critical — skip silently
