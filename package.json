@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "coding-studio": "./dist/cli.js"
+    "coding-studio": "./dist/cli.js",
+    "coding": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
