@@ -58,17 +58,26 @@ export class CodingStudioTUI {
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
   private promptVisible = false;
+  private historyFile: string;
 
   constructor() {
+    // Load input history (like Claude Code's history.ts)
+    this.historyFile = path.join(process.cwd(), ".coding-studio", "input-history.json");
+    const history = this.loadHistory();
+
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: true,
+      history,
+      historySize: 100,
     });
 
     this.rl.on("line", (line) => {
       this.promptVisible = false;
-      this.handleInput(line.trim());
+      const trimmed = line.trim();
+      if (trimmed) this.saveToHistory(trimmed);
+      this.handleInput(trimmed);
       this.showPrompt();
     });
 
@@ -140,6 +149,30 @@ export class CodingStudioTUI {
   }
 
   hasUserMessages(): boolean { return this.userMessages.length > 0; }
+
+  // ── Input history (arrow up/down) ──
+
+  private loadHistory(): string[] {
+    try {
+      if (fs.existsSync(this.historyFile)) {
+        return JSON.parse(fs.readFileSync(this.historyFile, "utf-8"));
+      }
+    } catch {}
+    return [];
+  }
+
+  private saveToHistory(input: string): void {
+    try {
+      const history = this.loadHistory();
+      // Dedupe: don't add if same as last entry
+      if (history[0] === input) return;
+      history.unshift(input);
+      const trimmed = history.slice(0, 100);
+      const dir = path.dirname(this.historyFile);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.historyFile, JSON.stringify(trimmed), "utf-8");
+    } catch {}
+  }
 
   destroy(): void {
     this.rl.close();
