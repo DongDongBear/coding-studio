@@ -57,6 +57,7 @@ export class CodingStudioTUI {
   private currentPhase = "";
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
+  private promptVisible = false;
 
   constructor() {
     this.rl = readline.createInterface({
@@ -66,6 +67,7 @@ export class CodingStudioTUI {
     });
 
     this.rl.on("line", (line) => {
+      this.promptVisible = false;
       this.handleInput(line.trim());
       this.showPrompt();
     });
@@ -73,24 +75,35 @@ export class CodingStudioTUI {
     this.rl.on("close", () => process.exit(0));
 
     // Welcome
-    this.out("");
-    this.out(`  ${c("cyan", "┌─────────────────────────────────────┐", true)}`);
-    this.out(`  ${c("cyan", "│", true)}  ${c("cyan", "⊙ω⊙", true)} ${BOLD}Coding Studio${RESET}              ${c("cyan", "│", true)}`);
-    this.out(`  ${c("cyan", "│", true)}  ${DIM}Plan → Contract → Build → Eval${RESET}   ${c("cyan", "│", true)}`);
-    this.out(`  ${c("cyan", "└─────────────────────────────────────┘", true)}`);
-    this.out(`  ${DIM}Type your prompt, or /run  |  /agent /resume /quit${RESET}`);
-    this.out("");
+    console.log("");
+    console.log(`  ${c("cyan", "┌─────────────────────────────────────┐", true)}`);
+    console.log(`  ${c("cyan", "│", true)}  ${c("cyan", "⊙ω⊙", true)} ${BOLD}Coding Studio${RESET}              ${c("cyan", "│", true)}`);
+    console.log(`  ${c("cyan", "│", true)}  ${DIM}Plan → Contract → Build → Eval${RESET}   ${c("cyan", "│", true)}`);
+    console.log(`  ${c("cyan", "└─────────────────────────────────────┘", true)}`);
+    console.log(`  ${DIM}Type your prompt, or /run  |  /agent /resume /quit${RESET}`);
+    console.log("");
 
     this.showPrompt();
   }
 
   // ── Output (straight to stdout — native scroll + selection) ──
 
+  /**
+   * Write a line to stdout.
+   * Mimics ink's <Static> pattern: clear the dynamic prompt area,
+   * write permanent content, then redraw the prompt at the bottom.
+   */
   private out(text: string): void {
-    // Clear current prompt line, write output, prompt redraws after
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
+    if (this.promptVisible) {
+      // Erase the prompt line so output appears cleanly above it
+      readline.moveCursor(process.stdout, 0, 0);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+    }
+    // Write the permanent line (goes into terminal scrollback)
     process.stdout.write(text + "\n");
+    // Immediately redraw prompt below the new output
+    this.showPrompt();
   }
 
   private showPrompt(): void {
@@ -99,6 +112,7 @@ export class CodingStudioTUI {
       : `${FG.cyan}${BOLD}❯${RESET} `;
     this.rl.setPrompt(prefix);
     this.rl.prompt(true);
+    this.promptVisible = true;
   }
 
   // ── Public API ──
