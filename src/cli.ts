@@ -544,17 +544,20 @@ program
           const rDir = path.resolve(process.cwd(), rConfig.pipeline.artifactsDir);
           const rStore = new ArtifactStore(rDir);
 
-          // Show session picker
-          const sessions = rStore.listSessions();
+          // Show session picker — only incomplete sessions
+          const allSessions = rStore.listSessions();
+          const sessions = allSessions.filter((s) => s.phase !== "completed" && s.phase !== "failed");
+
           if (sessions.length === 0) {
-            // Fallback: check if there's a saved spec without session index
+            // Fallback: check if there's a saved spec with incomplete status
             const rSpec = rStore.readSpec();
-            if (rSpec) {
+            const rStatus = rStore.readStatus();
+            if (rSpec && rStatus && rStatus.phase !== "completed" && rStatus.phase !== "failed") {
               sessions.push({
                 id: "legacy",
                 prompt: rSpec.slice(0, 100),
                 startedAt: new Date().toISOString(),
-                phase: rStore.readStatus()?.phase ?? "unknown",
+                phase: rStatus.phase,
                 rounds: rStore.listEvalReports().length,
                 lastScore: null,
                 mode: rConfig.pipeline.mode,
@@ -563,6 +566,7 @@ program
           }
 
           if (sessions.length === 0) {
+            tui.agentLog("system", "No incomplete sessions to resume. All sessions are completed or failed.");
             tui.agentLog("system", "No sessions found. Use /run <prompt> to start.");
             break;
           }
