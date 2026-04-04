@@ -15,6 +15,7 @@ const FG = {
   red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
   blue: "\x1b[34m", magenta: "\x1b[35m", cyan: "\x1b[36m",
   white: "\x1b[37m", gray: "\x1b[90m",
+  brightCyan: "\x1b[96m", brightGreen: "\x1b[92m", brightYellow: "\x1b[93m",
 } as const;
 
 function c(fg: keyof typeof FG, text: string, bold = false): string {
@@ -167,7 +168,7 @@ export class CodingStudioTUI {
     }
 
     const topPad = Math.max(0, cols - 2 - hint.length);
-    return `${FG.cyan}${"─".repeat(2)}${RESET}${hint}${FG.cyan}${"─".repeat(topPad)}${RESET}`;
+    return `${FG.brightGreen}${BOLD}${"━".repeat(2)}${RESET}${FG.brightGreen}${hint}${BOLD}${"━".repeat(topPad)}${RESET}`;
   }
 
   private showPrompt(): void {
@@ -195,7 +196,7 @@ export class CodingStudioTUI {
       status = ` ${DIM}ready${RESET} `;
     }
     const botPad = Math.max(0, cols - 2 - this.stripAnsi(status).length);
-    const bottomSep = `${FG.cyan}${"─".repeat(2)}${RESET}${status}${FG.cyan}${"─".repeat(botPad)}${RESET}`;
+    const bottomSep = `${FG.brightGreen}${BOLD}${"━".repeat(2)}${RESET}${status}${FG.brightGreen}${BOLD}${"━".repeat(botPad)}${RESET}`;
 
     process.stdout.write(topSep + "\n");
     this.rl.setPrompt(` ${icon} `);
