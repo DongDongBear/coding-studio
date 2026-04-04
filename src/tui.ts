@@ -105,12 +105,17 @@ export class CodingStudioTUI {
    */
   private out(text: string): void {
     if (this.promptVisible) {
-      // Erase the prompt frame (separator + prompt line)
-      // Move up 1 line (separator), clear it, then clear prompt line
-      readline.moveCursor(process.stdout, 0, -1);
-      readline.clearLine(process.stdout, 0);
+      // Cursor is on input line (row 2 of 4: top-sep, INPUT, bot-sep, hint)
+      // Move to top sep and erase all 4 lines
       readline.cursorTo(process.stdout, 0);
-      readline.clearLine(process.stdout, 0); // also clear the line we're now on
+      readline.moveCursor(process.stdout, 0, -1); // top sep
+      for (let i = 0; i < 4; i++) {
+        readline.clearLine(process.stdout, 0);
+        if (i < 3) readline.moveCursor(process.stdout, 0, 1);
+      }
+      // Move back to where top sep was
+      readline.moveCursor(process.stdout, 0, -3);
+      readline.cursorTo(process.stdout, 0);
     }
     process.stdout.write(text + "\n");
     this.showPrompt();
@@ -118,15 +123,22 @@ export class CodingStudioTUI {
 
   private showPrompt(): void {
     const cols = process.stdout.columns || 80;
-    const sep = `${DIM}${"─".repeat(cols)}${RESET}`;
+    const top = `${DIM}${"─".repeat(cols)}${RESET}`;
     const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
-    const hint = this.running ? `${DIM}running${RESET}` : `${DIM}↑↓ history${RESET}`;
+    const hint = this.running
+      ? `${DIM}pipeline running · type to chat with planner${RESET}`
+      : `${DIM}↑↓ history · /run /resume /agent /quit${RESET}`;
+    const bottom = `${DIM}${"─".repeat(cols)}${RESET}`;
 
-    // Write separator line
-    process.stdout.write(sep + "\n");
-    // Set prompt with icon
+    process.stdout.write(top + "\n");
     this.rl.setPrompt(` ${icon} `);
     this.rl.prompt(true);
+    // Write bottom separator after prompt (on next line)
+    process.stdout.write("\n" + bottom + "\n" + ` ${hint}`);
+    // Move cursor back up to the input line
+    readline.moveCursor(process.stdout, 0, -2);
+    // Position cursor after the prompt prefix
+    readline.cursorTo(process.stdout, 4);
     this.promptVisible = true;
   }
 
