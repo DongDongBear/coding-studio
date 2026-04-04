@@ -153,18 +153,30 @@ export class CodingStudioTUI {
     this.showPrompt();
   }
 
+  private buildTopSep(): string {
+    const cols = process.stdout.columns || 80;
+    let hint: string;
+
+    if (this.spinnerLabel) {
+      const frame = this.spinnerFrames[this.spinnerIdx % this.spinnerFrames.length];
+      hint = ` ${frame} ${this.spinnerLabel} `;
+    } else if (this.running) {
+      hint = " type to chat with planner ";
+    } else {
+      hint = " ↑↓ history · /run /resume /agent /quit ";
+    }
+
+    const topPad = Math.max(0, cols - 2 - hint.length);
+    return `${FG.cyan}${"─".repeat(2)}${RESET}${hint}${FG.cyan}${"─".repeat(topPad)}${RESET}`;
+  }
+
   private showPrompt(): void {
     if (this.externalUIActive) return;
 
     const cols = process.stdout.columns || 80;
     const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
 
-    // ── Top separator: commands/hints ──
-    const hint = this.running
-      ? " type to chat with planner "
-      : " ↑↓ history · /run /resume /agent /quit ";
-    const topPad = Math.max(0, cols - 2 - hint.length);
-    const topSep = `${FG.cyan}${"─".repeat(2)}${hint}${"─".repeat(topPad)}${RESET}`;
+    const topSep = this.buildTopSep();
 
     // ── Bottom separator: status line ──
     let status = "";
@@ -280,30 +292,38 @@ export class CodingStudioTUI {
     this.showPrompt();
   }
 
-  // ── Spinner (like Claude Code's Spinner component) ──
+  // ── Spinner (embedded in prompt status line, not a separate row) ──
+
+  private spinnerLabel = "";
 
   startSpinner(label: string): void {
     this.stopSpinner();
     this.spinnerIdx = 0;
-    const render = () => {
-      const frame = this.spinnerFrames[this.spinnerIdx % this.spinnerFrames.length];
+    this.spinnerLabel = label;
+    this.spinnerTimer = setInterval(() => {
       this.spinnerIdx++;
-      const elapsed = this.fmtElapsed();
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      process.stdout.write(`  ${FG.cyan}${frame}${RESET} ${DIM}${label}${RESET} ${DIM}${elapsed}${RESET}`);
-    };
-    render();
-    this.spinnerTimer = setInterval(render, 80);
+      this.refreshPromptInPlace();
+    }, 80);
   }
 
   stopSpinner(): void {
     if (this.spinnerTimer) {
       clearInterval(this.spinnerTimer);
       this.spinnerTimer = null;
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
+      this.spinnerLabel = "";
     }
+  }
+
+  /** Redraw just the prompt separator + input without erasing output above */
+  private refreshPromptInPlace(): void {
+    if (this.externalUIActive || !this.promptVisible) return;
+    // Cursor is on the input line. Move up to top sep, redraw both lines.
+    readline.cursorTo(process.stdout, 0);
+    readline.moveCursor(process.stdout, 0, -1); // top sep
+    readline.clearLine(process.stdout, 0);
+    process.stdout.write(this.buildTopSep());
+    readline.moveCursor(process.stdout, 0, 1); // back to input
+    readline.cursorTo(process.stdout, 4); // after " ❯ "
   }
 
   // ── Markdown-lite rendering ──
