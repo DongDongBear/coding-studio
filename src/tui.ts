@@ -100,6 +100,7 @@ export class CodingStudioTUI {
   constructor() {
     this.screen = blessed.screen({
       smartCSR: true,
+      mouse: false, // Let terminal handle mouse selection/copy natively
       title: "Coding Studio",
       fullUnicode: true,
     });
@@ -121,7 +122,7 @@ export class CodingStudioTUI {
     });
     this.updateStatusBar("Ready");
 
-    // ── Main output (mouse scroll + Shift+drag to select/copy text) ──
+    // ── Main output (keyboard scroll: PgUp/PgDn/j/k, mouse free for selection) ──
     this.outputArea = blessed.log({
       top: 1,
       left: 0,
@@ -130,7 +131,7 @@ export class CodingStudioTUI {
       scrollable: true,
       alwaysScroll: true,
       scrollbar: { ch: "▐", style: { fg: "gray" } } as any,
-      mouse: true,
+      mouse: false,
       keys: true,
       vi: true,
       tags: false,
@@ -155,7 +156,7 @@ export class CodingStudioTUI {
       width: "100%-5",
       height: 1,
       inputOnFocus: true,
-      mouse: true,
+      mouse: false,
       tags: false,
       style: { fg: "white", bold: true },
     });
@@ -177,8 +178,12 @@ export class CodingStudioTUI {
     this.screen.append(this.inputBox);
     this.screen.append(this.statusPanel);
 
-    // ── Input handling ──
+    // ── Input handling (debounced to prevent double-fire) ──
+    let lastSubmitTime = 0;
     this.inputBox.on("submit", (value: string) => {
+      const now = Date.now();
+      if (now - lastSubmitTime < 200) return; // debounce
+      lastSubmitTime = now;
       this.handleInput(value.trim());
       (this.inputBox as any).clearValue();
       this.inputBox.focus();
@@ -192,6 +197,16 @@ export class CodingStudioTUI {
 
     this.screen.key(["escape"], () => {
       this.inputBox.focus();
+      this.screen.render();
+    });
+
+    // Scroll output with Page Up/Down (works while input is focused)
+    this.screen.key(["pageup"], () => {
+      (this.outputArea as any).scroll(-10);
+      this.screen.render();
+    });
+    this.screen.key(["pagedown"], () => {
+      (this.outputArea as any).scroll(10);
       this.screen.render();
     });
 
