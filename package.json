@@ -20,13 +20,11 @@
     "@mariozechner/pi-ai": "latest",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "@sinclair/typebox": "^0.34.0",
-    "blessed": "^0.1.81",
     "commander": "^13.0.0",
     "open": "^11.0.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
-    "@types/blessed": "^0.1.27",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
