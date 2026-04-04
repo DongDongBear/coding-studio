@@ -154,6 +154,69 @@ export class CodingStudioTUI {
     this.promptVisible = true;
   }
 
+  // ── History replay for /resume ──
+
+  /**
+   * Replay saved artifacts so user sees what happened before the interruption.
+   */
+  replayHistory(artifacts: {
+    spec?: string;
+    contract?: string;
+    evalReports?: Array<{ round: number; verdict: string; overallScore: number; summary: string;
+      scores?: Array<{ name: string; score: number; feedback: string }>;
+      blockers?: Array<{ severity: string; description: string }>;
+      bugs?: Array<{ severity: string; description: string; location?: string }>;
+    }>;
+    status?: { phase: string; currentRound: number; maxRounds: number };
+  }): void {
+    this.out(`  ${c("blue", "⚙", true)} ${c("blue", "System", true)}  Restoring previous session...`);
+    this.out("");
+
+    // Spec summary
+    if (artifacts.spec) {
+      this.out(`  ${c("cyan", "⊙ω⊙ ━━━ PLANNING (restored) ━━━━━━━━━━", true)}`);
+      const specLines = artifacts.spec.split("\n").slice(0, 8);
+      for (const line of specLines) {
+        this.out(`  ${DIM}│${RESET} ${line}`);
+      }
+      if (artifacts.spec.split("\n").length > 8) {
+        this.out(`  ${DIM}│ ... (${artifacts.spec.split("\n").length} lines total)${RESET}`);
+      }
+      this.out("");
+    }
+
+    // Contract summary
+    if (artifacts.contract) {
+      this.out(`  ${c("cyan", "✍  ━━━ CONTRACTING (restored) ━━━━━━━━", true)}`);
+      const contractLines = artifacts.contract.split("\n").slice(0, 6);
+      for (const line of contractLines) {
+        this.out(`  ${DIM}│${RESET} ${line}`);
+      }
+      if (artifacts.contract.split("\n").length > 6) {
+        this.out(`  ${DIM}│ ... (${artifacts.contract.split("\n").length} lines total)${RESET}`);
+      }
+      this.out("");
+    }
+
+    // Eval reports
+    if (artifacts.evalReports && artifacts.evalReports.length > 0) {
+      for (const report of artifacts.evalReports) {
+        const v = report.verdict === "pass";
+        const vStr = v ? c("green", "PASS", true) : c("red", "FAIL", true);
+        const sStr = v ? c("green", report.overallScore.toFixed(1)) : c("red", report.overallScore.toFixed(1));
+        this.out(`  ${DIM}Round ${report.round}:${RESET} ${vStr} ${sStr}/10  ${DIM}${report.summary.slice(0, 60)}${RESET}`);
+      }
+      this.out("");
+    }
+
+    // Current state
+    if (artifacts.status) {
+      const icon = PHASE_ICONS[artifacts.status.phase] ?? "●";
+      this.out(`  ${c("yellow", "▸", true)} Resuming from ${BOLD}${artifacts.status.phase}${RESET} phase, round ${artifacts.status.currentRound}/${artifacts.status.maxRounds}`);
+      this.out("");
+    }
+  }
+
   // ── Public API ──
 
   setCommandHandler(handler: (cmd: string, args: string) => void): void {

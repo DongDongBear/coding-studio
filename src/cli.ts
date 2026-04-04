@@ -571,8 +571,23 @@ program
           if (selected < 0) break;
 
           const session = sessions[selected];
-          tui.agentLog("system", `Resuming: ${session.prompt}`);
           tui.setRunning(true);
+
+          // Replay saved history so user sees previous context
+          tui.replayHistory({
+            spec: rStore.readSpec() ?? undefined,
+            contract: rStore.readContract() ?? undefined,
+            evalReports: rStore.listEvalReports().map((r) => ({
+              round: r.round,
+              verdict: r.verdict,
+              overallScore: r.overallScore,
+              summary: r.summary,
+              scores: r.scores,
+              blockers: r.blockers,
+              bugs: r.bugs,
+            })),
+            status: rStore.readStatus() ?? undefined,
+          });
 
           const rcfg = loadConfig(getConfigPath());
           const rauthStorage = AuthStorage.create(AUTH_PATH);
