@@ -54,9 +54,8 @@ export class CodingStudioTUI {
   private screen: blessed.Widgets.Screen;
   private statusBar: blessed.Widgets.BoxElement;
   private outputArea: blessed.Widgets.Log;
-  private separator: blessed.Widgets.BoxElement;
   private inputBox: blessed.Widgets.TextboxElement;
-  private hintBar: blessed.Widgets.BoxElement;
+  private statusPanel: blessed.Widgets.BoxElement;
 
   private userMessages: string[] = [];
   private textBuffer = "";
@@ -68,6 +67,11 @@ export class CodingStudioTUI {
   private startTime = 0;
   private currentPhase = "";
   private currentRound = 0;
+  private maxRounds = 3;
+  private lastScore = "—";
+  private lastVerdict = "";
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private prompt = "";
 
   constructor() {
     this.screen = blessed.screen({
@@ -76,7 +80,13 @@ export class CodingStudioTUI {
       fullUnicode: true,
     });
 
-    // ── Status bar ──
+    // Layout (top to bottom):
+    //   [status bar]      1 line
+    //   [output area]     flexible
+    //   [input box]       1 line
+    //   [status panel]    4 lines - progress, phase, score, hints
+
+    // ── Status bar (top) ──
     this.statusBar = blessed.box({
       top: 0,
       left: 0,
@@ -87,61 +97,61 @@ export class CodingStudioTUI {
     });
     this.updateStatusBar("Ready");
 
-    // ── Main output ──
+    // ── Main output (scrollable) ──
     this.outputArea = blessed.log({
       top: 1,
       left: 0,
       width: "100%",
-      height: "100%-4",
+      height: "100%-6",
       scrollable: true,
       alwaysScroll: true,
       scrollbar: { ch: " ", style: { bg: "gray" } } as any,
       mouse: true,
       keys: true,
       vi: true,
-      tags: false, // We use raw ANSI, not blessed tags
+      tags: false,
       style: { fg: "white" },
     } as any);
 
-    // ── Separator line ──
-    this.separator = blessed.box({
-      bottom: 2,
-      left: 0,
-      width: "100%",
+    // ── Input prompt label ──
+    const inputLabel = blessed.box({
+      bottom: 4,
+      left: 1,
+      width: 3,
       height: 1,
       tags: false,
-      content: `${DIM}${"─".repeat(200)}${RESET}`,
-      style: { fg: "gray" },
+      content: `${FG.cyan}${BOLD}❯${RESET}`,
+      style: { fg: "cyan" },
     });
 
     // ── Input box ──
     this.inputBox = blessed.textbox({
-      bottom: 1,
-      left: 0,
-      width: "100%",
+      bottom: 4,
+      left: 4,
+      width: "100%-5",
       height: 1,
       inputOnFocus: true,
       mouse: true,
       tags: false,
-      style: { fg: "white" },
+      style: { fg: "white", bold: true },
     });
 
-    // ── Hint bar ──
-    this.hintBar = blessed.box({
+    // ── Status panel (bottom) ──
+    this.statusPanel = blessed.box({
       bottom: 0,
       left: 0,
       width: "100%",
-      height: 1,
+      height: 4,
       tags: false,
-      content: ` ${DIM}/run${RESET}${DIM} start${RESET}  ${DIM}/agent${RESET}${DIM} claude${RESET}  ${DIM}/abort${RESET}  ${DIM}/quit${RESET}  ${DIM}or just type your prompt${RESET}`,
-      style: { fg: "gray" },
+      style: { fg: "white" },
     });
+    this.renderStatusPanel();
 
     this.screen.append(this.statusBar);
     this.screen.append(this.outputArea);
-    this.screen.append(this.separator);
+    this.screen.append(inputLabel);
     this.screen.append(this.inputBox);
-    this.screen.append(this.hintBar);
+    this.screen.append(this.statusPanel);
 
     // ── Input handling ──
     this.inputBox.on("submit", (value: string) => {
@@ -179,7 +189,18 @@ export class CodingStudioTUI {
 
   setRunning(value: boolean): void {
     this.running = value;
-    if (value) this.startTime = Date.now();
+    if (value) {
+      this.startTime = Date.now();
+      this.lastScore = "—";
+      this.lastVerdict = "";
+      this.currentPhase = "";
+      this.currentRound = 0;
+      this.startStatusTimer();
+      this.renderStatusPanel();
+    } else {
+      this.stopStatusTimer();
+      this.renderStatusPanel();
+    }
   }
 
   isRunning(): boolean {
@@ -197,6 +218,7 @@ export class CodingStudioTUI {
   }
 
   destroy(): void {
+    this.stopStatusTimer();
     this.screen.destroy();
   }
 
@@ -305,20 +327,59 @@ export class CodingStudioTUI {
   // ── Status bar ──
 
   private updateStatusBar(label: string): void {
-    let elapsed = "";
-    if (this.startTime > 0 && this.running) {
-      const s = Math.floor((Date.now() - this.startTime) / 1000);
-      const m = Math.floor(s / 60);
-      elapsed = ` ${DIM}${m}:${String(s % 60).padStart(2, "0")}${RESET}`;
-    }
-
     const phase = this.currentPhase ? ` ${PHASE_ICONS[this.currentPhase] ?? "●"} ${this.currentPhase}` : "";
     const round = this.currentRound > 0 ? ` R${this.currentRound}` : "";
 
     this.statusBar.setContent(
-      ` ${BOLD}Coding Studio${RESET}${BG.blue}${FG.white}  ${label}${phase}${round}${elapsed} `,
+      ` ${BOLD}Coding Studio${RESET}${BG.blue}${FG.white}  ${label}${phase}${round} `,
     );
     this.screen.render();
+  }
+
+  // ── Status panel (bottom) ──
+
+  private fmtElapsed(): string {
+    if (!this.startTime || !this.running) return "—";
+    const s = Math.floor((Date.now() - this.startTime) / 1000);
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  private renderStatusPanel(): void {
+    const w = (this.screen as any).width ?? 80;
+    const sep = `${DIM}${"─".repeat(w)}${RESET}`;
+
+    const phases = ["planning", "contracting", "building", "evaluating"];
+    const phaseLine = phases.map((p) => {
+      const icon = PHASE_ICONS[p] ?? "●";
+      if (p === this.currentPhase) return `${BOLD}${FG.cyan}${icon} ${p}${RESET}`;
+      if (phases.indexOf(p) < phases.indexOf(this.currentPhase)) return `${FG.green}${icon} ${p}${RESET}`;
+      return `${DIM}${icon} ${p}${RESET}`;
+    }).join("  ");
+
+    const elapsed = this.fmtElapsed();
+    const round = this.currentRound > 0 ? `Round ${this.currentRound}/${this.maxRounds}` : "—";
+    const score = this.lastScore;
+    const verdict = this.lastVerdict ? (this.lastVerdict === "pass" ? `${FG.green}PASS${RESET}` : `${FG.red}FAIL${RESET}`) : "—";
+
+    const infoLine = `  ${DIM}Time:${RESET} ${elapsed}  ${DIM}Round:${RESET} ${round}  ${DIM}Score:${RESET} ${score}  ${DIM}Last:${RESET} ${verdict}  ${DIM}│${RESET}  ${DIM}/run  /agent  /abort  /quit${RESET}`;
+
+    this.statusPanel.setContent(`${sep}\n${phaseLine.length > 0 ? `  ${phaseLine}` : ""}\n${infoLine}\n  ${DIM}Type your prompt to start, or use commands above${RESET}`);
+    this.screen.render();
+  }
+
+  private startStatusTimer(): void {
+    if (this.statusTimer) return;
+    this.statusTimer = setInterval(() => {
+      if (this.running) this.renderStatusPanel();
+    }, 1000);
+  }
+
+  private stopStatusTimer(): void {
+    if (this.statusTimer) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
   }
 
   // ── Orchestrator events ──
@@ -334,6 +395,7 @@ export class CodingStudioTUI {
         this.log(`  ${BOLD}${icon} ${event.phase.toUpperCase()}${RESET}`);
         this.log(`  ${DIM}${"─".repeat(50)}${RESET}`);
         this.updateStatusBar("Running");
+        this.renderStatusPanel();
         break;
       }
 
@@ -344,6 +406,7 @@ export class CodingStudioTUI {
         this.log("");
         this.log(`  ${c("yellow", `═══ Round ${event.round} ═══`, true)}`);
         this.updateStatusBar("Running");
+        this.renderStatusPanel();
         break;
 
       case "log":
@@ -365,6 +428,8 @@ export class CodingStudioTUI {
 
       case "eval":
         this.flushTextBuffer();
+        this.lastScore = event.report.overallScore.toFixed(1);
+        this.lastVerdict = event.report.verdict;
         this.evalLog(
           event.report.verdict,
           event.report.overallScore,
@@ -372,6 +437,7 @@ export class CodingStudioTUI {
           event.report.blockers,
           event.report.bugs,
         );
+        this.renderStatusPanel();
         break;
 
       case "pause":
