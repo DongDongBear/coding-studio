@@ -59,6 +59,7 @@ export class Orchestrator {
   private deps: OrchestratorDeps;
   private config: OrchestratorConfig;
   private listeners: Array<(event: OrchestratorEvent) => void> = [];
+  private ccLineBuf = "";
 
   constructor(deps: OrchestratorDeps, config: OrchestratorConfig) {
     this.deps = deps;
@@ -198,7 +199,7 @@ export class Orchestrator {
         spec,
         contract || undefined,
         lastReport,
-        (chunk) => this.emit({ type: "agent_text", agent: "generator", delta: chunk }),
+        (chunk) => this.parseGeneratorStream(chunk),
       );
       const buildDuration = (Date.now() - buildStart) / 1000;
 
@@ -288,5 +289,51 @@ export class Orchestrator {
     this.deps.artifactStore.writeStatus(status);
     this.emit({ type: "complete", status });
     return status;
+  }
+
+  /**
+   * Parse CC's stream-json NDJSON output and emit structured events.
+   * CC outputs one JSON object per line with types like:
+   *   - assistant (content: text/thinking/tool_use)
+   *   - user (tool_result)
+   *   - result (final summary)
+   *   - system (hooks, init)
+   */
+  private parseGeneratorStream(chunk: string): void {
+    this.ccLineBuf += chunk;
+    const lines = this.ccLineBuf.split("\n");
+    this.ccLineBuf = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        const content = event.message?.content;
+
+        if (event.type === "assistant" && Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "text" && block.text) {
+              this.emit({ type: "agent_text", agent: "generator", delta: block.text + "\n" });
+            } else if (block.type === "tool_use") {
+              const name = block.name ?? "tool";
+              const inputPreview = block.input
+                ? Object.entries(block.input)
+                    .filter(([k]) => ["command", "file_path", "path", "pattern", "content"].includes(k))
+                    .map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`)
+                    .join(", ")
+                : "";
+              this.emit({ type: "tool_use", agent: "generator", tool: name, status: "start", args: inputPreview });
+            }
+          }
+        } else if (event.type === "result") {
+          if (event.subtype === "success" && event.result) {
+            this.emit({ type: "agent_text", agent: "generator", delta: "\n" + event.result + "\n" });
+          }
+        }
+        // Ignore system, user (tool_result) events — they're noise
+      } catch {
+        // Not JSON — ignore
+      }
+    }
   }
 }
