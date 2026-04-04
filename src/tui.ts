@@ -60,6 +60,7 @@ export class CodingStudioTUI {
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
   private promptVisible = false;
+  private externalUIActive = false; // true when inquirer/external UI has stdin
   private historyFile: string;
 
   constructor() {
@@ -105,6 +106,12 @@ export class CodingStudioTUI {
    * write permanent content, then redraw the prompt at the bottom.
    */
   private out(text: string): void {
+    // When inquirer or external UI owns the terminal, just write directly
+    if (this.externalUIActive) {
+      process.stdout.write(text + "\n");
+      return;
+    }
+
     if (this.promptVisible) {
       // Erase separator line + prompt line (2 lines)
       readline.moveCursor(process.stdout, 0, -1);
@@ -120,6 +127,8 @@ export class CodingStudioTUI {
   }
 
   private showPrompt(): void {
+    if (this.externalUIActive) return;
+
     const cols = process.stdout.columns || 80;
     const hint = this.running
       ? "type to chat with planner"
@@ -201,14 +210,16 @@ export class CodingStudioTUI {
       return -1;
     }
 
-    // Pause our readline so inquirer can take over stdin
+    // Hand over terminal to inquirer
+    this.externalUIActive = true;
+    this.promptVisible = false;
     this.rl.pause();
 
     try {
       const choices = sessions.map((s, i) => {
         const time = s.startedAt.replace("T", " ").slice(5, 16);
         const score = s.lastScore !== null ? s.lastScore.toFixed(1) : "—";
-        const prompt = s.prompt.slice(0, 45) + (s.prompt.length > 45 ? "…" : "");
+        const prompt = s.prompt.split("\n")[0].slice(0, 45) + (s.prompt.length > 45 ? "…" : "");
         return {
           name: `${time}  ${s.phase.padEnd(12)} R${s.rounds}  ${score.padEnd(5)}  ${prompt}`,
           value: i,
@@ -220,13 +231,15 @@ export class CodingStudioTUI {
         choices,
       });
 
+      // Restore our terminal control
+      this.externalUIActive = false;
       this.rl.resume();
       this.showPrompt();
       return selected;
     } catch {
-      // User pressed Esc/Ctrl+C
+      this.externalUIActive = false;
       this.rl.resume();
-      this.out(`  ${DIM}Cancelled.${RESET}`);
+      process.stdout.write(`  ${DIM}Cancelled.${RESET}\n`);
       this.showPrompt();
       return -1;
     }
