@@ -104,22 +104,27 @@ export class CodingStudioTUI {
    */
   private out(text: string): void {
     if (this.promptVisible) {
-      // Erase the prompt line so output appears cleanly above it
-      readline.moveCursor(process.stdout, 0, 0);
+      // Erase the prompt frame (separator + prompt line)
+      // Move up 1 line (separator), clear it, then clear prompt line
+      readline.moveCursor(process.stdout, 0, -1);
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
+      readline.clearLine(process.stdout, 0); // also clear the line we're now on
     }
-    // Write the permanent line (goes into terminal scrollback)
     process.stdout.write(text + "\n");
-    // Immediately redraw prompt below the new output
     this.showPrompt();
   }
 
   private showPrompt(): void {
-    const prefix = this.running
-      ? `${FG.yellow}${BOLD}⚡${RESET} `
-      : `${FG.cyan}${BOLD}❯${RESET} `;
-    this.rl.setPrompt(prefix);
+    const cols = process.stdout.columns || 80;
+    const sep = `${DIM}${"─".repeat(cols)}${RESET}`;
+    const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
+    const hint = this.running ? `${DIM}running${RESET}` : `${DIM}↑↓ history${RESET}`;
+
+    // Write separator line
+    process.stdout.write(sep + "\n");
+    // Set prompt with icon
+    this.rl.setPrompt(` ${icon} `);
     this.rl.prompt(true);
     this.promptVisible = true;
   }
