@@ -105,22 +105,26 @@ export class CodingStudioTUI {
    * Mimics ink's <Static> pattern: clear the dynamic prompt area,
    * write permanent content, then redraw the prompt at the bottom.
    */
+  // Prompt frame: 3 lines (top sep + input + bottom sep)
+  // Cursor sits on the input line (middle)
+
   private out(text: string): void {
-    // When inquirer or external UI owns the terminal, just write directly
     if (this.externalUIActive) {
       process.stdout.write(text + "\n");
       return;
     }
 
     if (this.promptVisible) {
-      // Erase separator line + prompt line (2 lines)
-      readline.moveCursor(process.stdout, 0, -1);
-      readline.clearLine(process.stdout, 0);
+      // Cursor is on input line (line 2 of 3). Erase all 3 lines.
       readline.cursorTo(process.stdout, 0);
-      readline.moveCursor(process.stdout, 0, 1);
+      readline.moveCursor(process.stdout, 0, -1); // up to top sep
       readline.clearLine(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, 1);  // input line
+      readline.clearLine(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, 1);  // bottom sep
+      readline.clearLine(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, -2); // back to top sep position
       readline.cursorTo(process.stdout, 0);
-      readline.moveCursor(process.stdout, 0, -1);
     }
     process.stdout.write(text + "\n");
     this.showPrompt();
@@ -131,15 +135,22 @@ export class CodingStudioTUI {
 
     const cols = process.stdout.columns || 80;
     const hint = this.running
-      ? "type to chat with planner"
-      : "↑↓ history · /run /resume /agent /quit";
-    const pad = Math.max(0, cols - hint.length - 2);
-    const sep = `${DIM}${"─".repeat(Math.min(pad, 4))} ${hint} ${"─".repeat(Math.max(0, pad - 4))}${RESET}`;
+      ? " type to chat with planner "
+      : " ↑↓ history · /run /resume /agent /quit ";
+    const hintLen = hint.length;
+    const leftPad = 2;
+    const rightPad = Math.max(0, cols - leftPad - hintLen);
+    const topSep = `${FG.cyan}${"─".repeat(leftPad)}${hint}${"─".repeat(rightPad)}${RESET}`;
+    const bottomSep = `${FG.cyan}${"─".repeat(cols)}${RESET}`;
     const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
 
-    process.stdout.write(sep + "\n");
+    process.stdout.write(topSep + "\n");
     this.rl.setPrompt(` ${icon} `);
     this.rl.prompt(true);
+    // Write bottom sep below prompt, then move cursor back up to input line
+    process.stdout.write("\n" + bottomSep);
+    readline.moveCursor(process.stdout, 0, -1); // back to input line
+    readline.cursorTo(process.stdout, 4);        // after " ❯ "
     this.promptVisible = true;
   }
 
