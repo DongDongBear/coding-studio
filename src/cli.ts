@@ -544,42 +544,27 @@ program
           const rDir = path.resolve(process.cwd(), rConfig.pipeline.artifactsDir);
           const rStore = new ArtifactStore(rDir);
 
-          // Show session picker — only incomplete sessions
-          const allSessions = rStore.listSessions();
-          const sessions = allSessions.filter((s) => s.phase !== "completed" && s.phase !== "failed");
+          // Check actual pipeline status (source of truth, not sessions.json)
+          const rStatus = rStore.readStatus();
+          const rSpec = rStore.readSpec();
+          const actualPhase = rStatus?.phase ?? "unknown";
+          const isResumable = rSpec && rStatus
+            && actualPhase !== "completed" && actualPhase !== "failed";
 
-          if (sessions.length === 0) {
-            // Fallback: check if there's a saved spec with incomplete status
-            const rSpec = rStore.readSpec();
-            const rStatus = rStore.readStatus();
-            if (rSpec && rStatus && rStatus.phase !== "completed" && rStatus.phase !== "failed") {
-              sessions.push({
-                id: "legacy",
-                prompt: rSpec.slice(0, 100),
-                startedAt: new Date().toISOString(),
-                phase: rStatus.phase,
-                rounds: rStore.listEvalReports().length,
-                lastScore: null,
-                mode: rConfig.pipeline.mode,
-              });
-            }
-          }
-
-          if (sessions.length === 0) {
-            tui.agentLog("system", "No incomplete sessions to resume. All sessions are completed or failed.");
+          if (!isResumable) {
+            tui.agentLog("system", `No incomplete pipeline to resume (status: ${actualPhase}).`);
+            tui.agentLog("system", "Start a new project with /run <prompt>.");
             tui.agentLog("system", "No sessions found. Use /run <prompt> to start.");
             break;
           }
 
-          const selected = await tui.showSessionPicker(sessions);
-          if (selected < 0) break;
-
-          const session = sessions[selected];
+          // Direct resume — one pipeline state per project
+          tui.agentLog("system", `Resuming: ${actualPhase} phase, round ${rStatus!.currentRound}/${rStatus!.maxRounds}`);
           tui.setRunning(true);
 
-          // Replay saved history so user sees previous context
+          // Replay saved history
           tui.replayHistory({
-            spec: rStore.readSpec() ?? undefined,
+            spec: rSpec ?? undefined,
             contract: rStore.readContract() ?? undefined,
             evalReports: rStore.listEvalReports().map((r) => ({
               round: r.round,
@@ -590,7 +575,7 @@ program
               blockers: r.blockers,
               bugs: r.bugs,
             })),
-            status: rStore.readStatus() ?? undefined,
+            status: rStatus ?? undefined,
           });
 
           const rcfg = loadConfig(getConfigPath());
@@ -654,7 +639,7 @@ program
             }
           });
 
-          rOrch.run(session.prompt) // orchestrator detects saved state and resumes
+          rOrch.run(rSpec!) // orchestrator detects saved state and resumes
             .catch((err: Error) => {
               tui.agentLog("system", `Pipeline error: ${err.message}`);
             })
