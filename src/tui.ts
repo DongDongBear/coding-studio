@@ -164,11 +164,14 @@ export class CodingStudioTUI {
     } else if (this.running) {
       hint = " type to chat with planner ";
     } else {
-      hint = " ↑↓ history · /run /resume /agent /quit ";
+      hint = "";
     }
 
-    const topPad = Math.max(0, cols - 2 - hint.length);
-    return `${FG.brightGreen}${BOLD}${"━".repeat(2)}${RESET}${FG.brightGreen}${hint}${BOLD}${"━".repeat(topPad)}${RESET}`;
+    if (hint) {
+      const topPad = Math.max(0, cols - 2 - hint.length);
+      return `${FG.brightGreen}${BOLD}${"━".repeat(2)}${RESET}${FG.brightGreen}${hint}${BOLD}${"━".repeat(topPad)}${RESET}`;
+    }
+    return `${FG.brightGreen}${BOLD}${"━".repeat(cols)}${RESET}`;
   }
 
   private showPrompt(): void {
