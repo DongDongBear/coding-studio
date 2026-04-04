@@ -7,6 +7,26 @@ export class ArtifactStore {
 
   constructor(artifactsDir: string) {
     this.dir = artifactsDir;
+    this.ensureGitignore();
+  }
+
+  /** Ensure .coding-studio/ is in .gitignore */
+  private ensureGitignore(): void {
+    const projectRoot = path.dirname(this.dir);
+    const gitignorePath = path.join(projectRoot, ".gitignore");
+    const entry = path.basename(this.dir) + "/";
+    try {
+      if (fs.existsSync(gitignorePath)) {
+        const content = fs.readFileSync(gitignorePath, "utf-8");
+        if (!content.includes(entry)) {
+          fs.appendFileSync(gitignorePath, `\n${entry}\n`);
+        }
+      } else {
+        fs.writeFileSync(gitignorePath, `${entry}\n`);
+      }
+    } catch {
+      // Non-critical — skip silently
+    }
   }
 
   private ensureDir(subdir?: string): string {
