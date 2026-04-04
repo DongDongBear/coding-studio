@@ -52,6 +52,7 @@ export class CodingStudioTUI {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private onCommand?: (cmd: string, args: string) => void;
+  private onUserChat?: (message: string, phase: string) => void;
   private inputResolver: ((value: string) => void) | null = null;
   private startTime = 0;
   private currentPhase = "";
@@ -133,6 +134,11 @@ export class CodingStudioTUI {
 
   setCommandHandler(handler: (cmd: string, args: string) => void): void {
     this.onCommand = handler;
+  }
+
+  /** Set handler for user chat during pipeline — Planner responds */
+  setUserChatHandler(handler: (message: string, phase: string) => void): void {
+    this.onUserChat = handler;
   }
 
   setRunning(value: boolean): void {
@@ -443,7 +449,10 @@ export class CodingStudioTUI {
     if (this.running) {
       this.agentLog("user", value);
       this.userMessages.push(value);
-      this.out(`  ${DIM}  queued for next checkpoint${RESET}`);
+      // Planner responds immediately (like a project manager always on call)
+      if (this.onUserChat) {
+        this.onUserChat(value, this.currentPhase);
+      }
     } else {
       this.agentLog("user", value);
       this.onCommand?.("run", value);

@@ -504,6 +504,29 @@ program
           currentOrchestrator = orch;
           orch.onEvent((event) => tui.handleOrchestratorEvent(event));
 
+          // Planner responds to user chat during pipeline
+          tui.setUserChatHandler(async (message, phase) => {
+            try {
+              const chatPlanner = new Planner(
+                { ...config.planner, ambitious: false, injectAIFeatures: false },
+                config.models.planner,
+                getApiKey,
+              );
+              const response = await chatPlanner.plan(
+                [
+                  `You are a project manager responding to a team member's question during the ${phase} phase.`,
+                  `The project is currently in progress. Respond briefly and helpfully (2-3 sentences max).`,
+                  `Also note if this feedback should affect the current build. If so, say "NOTED FOR NEXT ROUND: <summary>".`,
+                  ``,
+                  `User says: ${message}`,
+                ].join("\n"),
+              );
+              tui.agentLog("planner", response.trim());
+            } catch {
+              tui.agentLog("planner", `Noted: "${message}" — will incorporate in next round.`);
+            }
+          });
+
           orch
             .run(args.trim())
             .catch((err: Error) => {
@@ -577,6 +600,27 @@ program
 
           currentOrchestrator = rOrch;
           rOrch.onEvent((event) => tui.handleOrchestratorEvent(event));
+
+          // Planner responds to user chat during resume
+          tui.setUserChatHandler(async (message, phase) => {
+            try {
+              const chatPlanner = new Planner(
+                { ...rcfg.planner, ambitious: false, injectAIFeatures: false },
+                rcfg.models.planner,
+                rgetApiKey,
+              );
+              const response = await chatPlanner.plan(
+                [
+                  `You are a project manager responding during the ${phase} phase.`,
+                  `Respond briefly (2-3 sentences). Note feedback for next round if relevant.`,
+                  `User says: ${message}`,
+                ].join("\n"),
+              );
+              tui.agentLog("planner", response.trim());
+            } catch {
+              tui.agentLog("planner", `Noted: "${message}" — will incorporate in next round.`);
+            }
+          });
 
           rOrch.run(rSpec) // use saved spec as the "prompt" — orchestrator will detect saved state
             .catch((err: Error) => {
