@@ -59,6 +59,7 @@ export class CodingStudioTUI {
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
   private promptVisible = false;
+  private pickerRendered = false;
   private historyFile: string;
 
   constructor() {
@@ -189,8 +190,8 @@ export class CodingStudioTUI {
   }
 
   /**
-   * Show a session picker (like Claude Code's LogSelector).
-   * Returns the selected session index, or -1 if cancelled.
+   * Interactive session picker with ↑↓ arrow selection.
+   * Like Claude Code's <Select> component.
    */
   showSessionPicker(sessions: Array<{
     id: string; prompt: string; startedAt: string;
@@ -201,33 +202,86 @@ export class CodingStudioTUI {
       return Promise.resolve(-1);
     }
 
-    this.out("");
-    this.out(`  ${BOLD}Select a session to resume:${RESET}`);
-    this.out(`  ${DIM}${"#".padEnd(4)}${"Time".padEnd(20)}${"Phase".padEnd(14)}${"Rounds".padEnd(8)}${"Score".padEnd(8)}Prompt${RESET}`);
-    this.out(`  ${DIM}${"─".repeat(80)}${RESET}`);
-
-    for (let i = 0; i < sessions.length; i++) {
-      const s = sessions[i];
-      const time = s.startedAt.replace("T", " ").slice(5, 16);
-      const phaseColor = s.phase === "completed" || s.phase === "failed" ? "gray" : "yellow";
-      const score = s.lastScore !== null ? s.lastScore.toFixed(1) : "—";
-      const prompt = s.prompt.slice(0, 40) + (s.prompt.length > 40 ? "…" : "");
-      this.out(`  ${c("cyan", `[${i}]`, true)}  ${time.padEnd(18)}${c(phaseColor as keyof typeof FG, s.phase.padEnd(12))}${String(s.rounds).padEnd(8)}${score.padEnd(8)}${prompt}`);
-    }
-
-    this.out("");
-    this.out(`  ${DIM}Enter number to resume, or press Enter to cancel${RESET}`);
-
     return new Promise((resolve) => {
-      this.inputResolver = (value: string) => {
-        const num = parseInt(value, 10);
-        if (!isNaN(num) && num >= 0 && num < sessions.length) {
-          resolve(num);
-        } else {
+      let selected = 0;
+      const count = sessions.length;
+
+      const formatRow = (i: number, highlight: boolean) => {
+        const s = sessions[i];
+        const time = s.startedAt.replace("T", " ").slice(5, 16);
+        const phaseColor = s.phase === "completed" || s.phase === "failed" ? "gray" : "yellow";
+        const score = s.lastScore !== null ? s.lastScore.toFixed(1) : "—";
+        const prompt = s.prompt.slice(0, 40) + (s.prompt.length > 40 ? "…" : "");
+        const cursor = highlight ? `${FG.cyan}${BOLD}▸${RESET}` : " ";
+        const text = `${time.padEnd(16)}${c(phaseColor as keyof typeof FG, s.phase.padEnd(12))}${String(s.rounds).padEnd(6)}${score.padEnd(6)} ${prompt}`;
+        return highlight ? `  ${cursor} ${BOLD}${text}${RESET}` : `  ${cursor} ${DIM}${text}${RESET}`;
+      };
+
+      const render = () => {
+        // Move up to clear previous render (header + rows + footer = count + 4)
+        if (this.pickerRendered) {
+          const totalLines = count + 4;
+          readline.moveCursor(process.stdout, 0, -totalLines);
+        }
+
+        // Header
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write(`  ${BOLD}Select a session to resume:${RESET}  ${DIM}↑↓ navigate · Enter select · Esc cancel${RESET}\n`);
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write(`  ${DIM}  ${"Time".padEnd(16)}${"Phase".padEnd(12)}${"Rnd".padEnd(6)}${"Score".padEnd(6)} Prompt${RESET}\n`);
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write(`  ${DIM}${"─".repeat(76)}${RESET}\n`);
+
+        // Rows
+        for (let i = 0; i < count; i++) {
+          readline.clearLine(process.stdout, 0);
+          process.stdout.write(formatRow(i, i === selected) + "\n");
+        }
+
+        // Footer
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write("\n");
+
+        this.pickerRendered = true;
+      };
+
+      // Pause readline so we can handle raw keypresses
+      this.rl.pause();
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+
+      this.pickerRendered = false;
+      process.stdout.write("\n");
+      render();
+
+      const onKey = (data: Buffer) => {
+        const key = data.toString();
+
+        if (key === "\x1b[A") { // Up
+          selected = (selected - 1 + count) % count;
+          render();
+        } else if (key === "\x1b[B") { // Down
+          selected = (selected + 1) % count;
+          render();
+        } else if (key === "\r" || key === "\n") { // Enter
+          cleanup();
+          this.out(`  ${c("cyan", "▸", true)} Selected: ${sessions[selected].prompt.slice(0, 50)}`);
+          resolve(selected);
+        } else if (key === "\x1b" || key === "\x03") { // Esc or Ctrl+C
+          cleanup();
           this.out(`  ${DIM}Cancelled.${RESET}`);
           resolve(-1);
         }
       };
+
+      const cleanup = () => {
+        process.stdin.removeListener("data", onKey);
+        process.stdin.setRawMode(false);
+        this.rl.resume();
+        this.pickerRendered = false;
+      };
+
+      process.stdin.on("data", onKey);
     });
   }
 
