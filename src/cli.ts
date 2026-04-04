@@ -394,21 +394,15 @@ program
   .action(async () => {
     const tui = new CodingStudioTUI();
 
-    // Check for resumable session
-    const resumeConfigPath = getConfigPath();
-    const resumeConfig = loadConfig(resumeConfigPath);
-    const resumeArtifactsDir = path.resolve(process.cwd(), resumeConfig.pipeline.artifactsDir);
-    const resumeStore = new ArtifactStore(resumeArtifactsDir);
-    const savedStatus = resumeStore.readStatus();
-    const canResume = savedStatus && savedStatus.phase !== "completed" && savedStatus.phase !== "failed"
-      && resumeStore.readSpec() && resumeStore.listEvalReports().length > 0;
+    // Show available sessions
+    const startupConfig = loadConfig(getConfigPath());
+    const startupDir = path.resolve(process.cwd(), startupConfig.pipeline.artifactsDir);
+    const startupStore = new ArtifactStore(startupDir);
+    const sessions = startupStore.listSessions();
+    const incompleteSessions = sessions.filter((s) => s.phase !== "completed" && s.phase !== "failed");
 
-    if (canResume) {
-      const rounds = resumeStore.listEvalReports().length;
-      tui.agentLog("system", `Found incomplete session (${rounds} rounds done, phase: ${savedStatus!.phase})`);
-      tui.agentLog("system", "Type /resume to continue, or start fresh with a new prompt.");
-    } else {
-      tui.agentLog("system", "Type your prompt to start building.");
+    if (incompleteSessions.length > 0) {
+      tui.agentLog("system", `${incompleteSessions.length} incomplete session(s) found. Type /resume to pick one.`);
     }
 
     let currentOrchestrator: Orchestrator | null = null;
@@ -549,17 +543,36 @@ program
           const rConfig = loadConfig(getConfigPath());
           const rDir = path.resolve(process.cwd(), rConfig.pipeline.artifactsDir);
           const rStore = new ArtifactStore(rDir);
-          const rSpec = rStore.readSpec();
-          if (!rSpec) {
-            tui.agentLog("system", "No saved session to resume. Use /run <prompt> instead.");
-            return;
+
+          // Show session picker
+          const sessions = rStore.listSessions();
+          if (sessions.length === 0) {
+            // Fallback: check if there's a saved spec without session index
+            const rSpec = rStore.readSpec();
+            if (rSpec) {
+              sessions.push({
+                id: "legacy",
+                prompt: rSpec.slice(0, 100),
+                startedAt: new Date().toISOString(),
+                phase: rStore.readStatus()?.phase ?? "unknown",
+                rounds: rStore.listEvalReports().length,
+                lastScore: null,
+                mode: rConfig.pipeline.mode,
+              });
+            }
           }
-          tui.agentLog("system", "Resuming previous session...");
-          // Trigger /run with the original prompt (orchestrator detects saved state and resumes)
-          (this as any)?.onCommand?.("run", rSpec.slice(0, 100)); // fallback prompt
-          // Actually, just call run handler directly:
+
+          if (sessions.length === 0) {
+            tui.agentLog("system", "No sessions found. Use /run <prompt> to start.");
+            break;
+          }
+
+          const selected = await tui.showSessionPicker(sessions);
+          if (selected < 0) break;
+
+          const session = sessions[selected];
+          tui.agentLog("system", `Resuming: ${session.prompt}`);
           tui.setRunning(true);
-          tui.agentLog("system", "Starting pipeline...");
 
           const rcfg = loadConfig(getConfigPath());
           const rauthStorage = AuthStorage.create(AUTH_PATH);
@@ -622,7 +635,7 @@ program
             }
           });
 
-          rOrch.run(rSpec) // use saved spec as the "prompt" — orchestrator will detect saved state
+          rOrch.run(session.prompt) // orchestrator detects saved state and resumes
             .catch((err: Error) => {
               tui.agentLog("system", `Pipeline error: ${err.message}`);
             })

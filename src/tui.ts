@@ -185,6 +185,49 @@ export class CodingStudioTUI {
     } catch {}
   }
 
+  /**
+   * Show a session picker (like Claude Code's LogSelector).
+   * Returns the selected session index, or -1 if cancelled.
+   */
+  showSessionPicker(sessions: Array<{
+    id: string; prompt: string; startedAt: string;
+    phase: string; rounds: number; lastScore: number | null; mode: string;
+  }>): Promise<number> {
+    if (sessions.length === 0) {
+      this.out(`  ${DIM}No sessions found.${RESET}`);
+      return Promise.resolve(-1);
+    }
+
+    this.out("");
+    this.out(`  ${BOLD}Select a session to resume:${RESET}`);
+    this.out(`  ${DIM}${"#".padEnd(4)}${"Time".padEnd(20)}${"Phase".padEnd(14)}${"Rounds".padEnd(8)}${"Score".padEnd(8)}Prompt${RESET}`);
+    this.out(`  ${DIM}${"─".repeat(80)}${RESET}`);
+
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i];
+      const time = s.startedAt.replace("T", " ").slice(5, 16);
+      const phaseColor = s.phase === "completed" || s.phase === "failed" ? "gray" : "yellow";
+      const score = s.lastScore !== null ? s.lastScore.toFixed(1) : "—";
+      const prompt = s.prompt.slice(0, 40) + (s.prompt.length > 40 ? "…" : "");
+      this.out(`  ${c("cyan", `[${i}]`, true)}  ${time.padEnd(18)}${c(phaseColor as keyof typeof FG, s.phase.padEnd(12))}${String(s.rounds).padEnd(8)}${score.padEnd(8)}${prompt}`);
+    }
+
+    this.out("");
+    this.out(`  ${DIM}Enter number to resume, or press Enter to cancel${RESET}`);
+
+    return new Promise((resolve) => {
+      this.inputResolver = (value: string) => {
+        const num = parseInt(value, 10);
+        if (!isNaN(num) && num >= 0 && num < sessions.length) {
+          resolve(num);
+        } else {
+          this.out(`  ${DIM}Cancelled.${RESET}`);
+          resolve(-1);
+        }
+      };
+    });
+  }
+
   destroy(): void {
     this.rl.close();
   }

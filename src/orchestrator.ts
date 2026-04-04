@@ -207,6 +207,7 @@ export class Orchestrator {
       status.currentRound = round;
       status.phase = "building";
       this.deps.artifactStore.writeStatus(status);
+      this.deps.artifactStore.saveSession(userPrompt, status);
 
       // Build
       this.emit({ type: "phase", phase: "building" });
@@ -296,6 +297,7 @@ export class Orchestrator {
     // Reached max rounds or no-eval mode
     status.phase = "completed";
     this.deps.artifactStore.writeStatus(status);
+    this.deps.artifactStore.saveSession(userPrompt, status);
     this.emit({ type: "complete", status });
     return status;
   }

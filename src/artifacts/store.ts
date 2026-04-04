@@ -118,4 +118,46 @@ export class ArtifactStore {
     const raw = this.readFrom("status.json");
     return raw ? (JSON.parse(raw) as PipelineStatus) : undefined;
   }
+
+  // ── Session index (for resume selection) ──
+
+  saveSession(prompt: string, status: PipelineStatus): void {
+    const sessions = this.listSessions();
+    const existing = sessions.findIndex((s) => s.id === status.mode + "-" + sessions.length);
+    const entry = {
+      id: `session-${Date.now()}`,
+      prompt: prompt.slice(0, 100),
+      startedAt: new Date().toISOString(),
+      phase: status.phase,
+      rounds: status.history.length,
+      lastScore: status.history.length > 0
+        ? status.history[status.history.length - 1].score ?? null
+        : null,
+      mode: status.mode,
+    };
+
+    // Update existing or add new
+    const idx = sessions.findIndex((s) => s.prompt === entry.prompt && s.phase !== "completed" && s.phase !== "failed");
+    if (idx >= 0) {
+      sessions[idx] = { ...sessions[idx], ...entry, id: sessions[idx].id };
+    } else {
+      sessions.unshift(entry);
+    }
+
+    this.writeTo("sessions.json", JSON.stringify(sessions.slice(0, 20), null, 2));
+  }
+
+  listSessions(): Array<{
+    id: string;
+    prompt: string;
+    startedAt: string;
+    phase: string;
+    rounds: number;
+    lastScore: number | null;
+    mode: string;
+  }> {
+    const raw = this.readFrom("sessions.json");
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
+  }
 }
