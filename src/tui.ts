@@ -471,7 +471,7 @@ export class CodingStudioTUI {
   // ── Pause with countdown ──
 
   waitForDecision(reason: string): Promise<{ response: string; auto: boolean }> {
-    const TIMEOUT_MS = 2 * 60 * 1000;
+    const TIMEOUT_MS = 30 * 1000;
 
     return new Promise((resolve) => {
       let settled = false;

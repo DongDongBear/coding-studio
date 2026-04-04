@@ -1,6 +1,6 @@
 import { input } from "@inquirer/prompts";
 
-const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const TIMEOUT_MS = 30 * 1000; // 30 seconds
 
 /**
  * Pause execution and wait for user confirmation.
