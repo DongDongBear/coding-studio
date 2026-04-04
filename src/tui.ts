@@ -32,23 +32,39 @@ function c(fg: keyof typeof FG, text: string, bold = false): string {
   return `${bold ? BOLD : ""}${FG[fg]}${text}${RESET}`;
 }
 
-// ── Constants ──
+// ── Pixel-art agent pets ──
 
 const AGENT_STYLES = {
-  planner: { icon: "◆", color: "cyan" as const, label: "Planner" },
-  generator: { icon: "◆", color: "yellow" as const, label: "Generator" },
-  evaluator: { icon: "◆", color: "magenta" as const, label: "Evaluator" },
-  user: { icon: "▶", color: "green" as const, label: "You" },
-  system: { icon: "●", color: "blue" as const, label: "System" },
+  planner:   { icon: "⊙ω⊙",  color: "cyan" as const,    label: "Planner",   desc: "strategist owl" },
+  generator: { icon: "[▓▓]",  color: "yellow" as const,  label: "Generator", desc: "code robot" },
+  evaluator: { icon: "◉‿◉",  color: "magenta" as const, label: "Evaluator", desc: "inspector" },
+  user:      { icon: "◕‿◕",  color: "green" as const,   label: "You",       desc: "" },
+  system:    { icon: "⚙",    color: "blue" as const,    label: "System",    desc: "" },
 } as const;
 
-const PHASE_ICONS: Record<string, string> = {
-  planning: "📋",
-  contracting: "📝",
-  building: "🔨",
-  running: "🚀",
-  evaluating: "🔍",
+const PHASE_ART: Record<string, { icon: string; bar: string }> = {
+  planning:    { icon: "⊙ω⊙", bar: "━━━ PLANNING ━━━━━━━━━━━━━━━━━━━" },
+  contracting: { icon: "✍ ",  bar: "━━━ CONTRACTING ━━━━━━━━━━━━━━━━" },
+  building:    { icon: "[▓▓]", bar: "━━━ BUILDING ━━━━━━━━━━━━━━━━━━━━" },
+  running:     { icon: "▶▶ ", bar: "━━━ RUNNING ━━━━━━━━━━━━━━━━━━━━━" },
+  evaluating:  { icon: "◉‿◉", bar: "━━━ EVALUATING ━━━━━━━━━━━━━━━━━━" },
 };
+
+const PHASE_ICONS: Record<string, string> = {
+  planning: "⊙ω⊙",
+  contracting: "✍ ",
+  building: "[▓▓]",
+  running: "▶▶ ",
+  evaluating: "◉‿◉",
+};
+
+/** Star rating for scores */
+function stars(score: number): string {
+  const full = Math.floor(score / 2);
+  const half = score % 2 >= 1 ? 1 : 0;
+  const empty = 5 - full - half;
+  return `${FG.yellow}${"★".repeat(full)}${"☆".repeat(half)}${RESET}${DIM}${"·".repeat(empty)}${RESET}`;
+}
 
 // ── TUI Class ──
 
@@ -184,8 +200,11 @@ export class CodingStudioTUI {
 
     // Welcome
     this.log("");
-    this.log(`  ${BOLD}Coding Studio${RESET}`);
-    this.log(`  ${DIM}Type a prompt to start building, or use /run <prompt>${RESET}`);
+    this.log(`  ${BOLD}${FG.cyan}┌─────────────────────────────────────┐${RESET}`);
+    this.log(`  ${BOLD}${FG.cyan}│${RESET}  ${c("cyan", "⊙ω⊙", true)} ${BOLD}Coding Studio${RESET}              ${BOLD}${FG.cyan}│${RESET}`);
+    this.log(`  ${BOLD}${FG.cyan}│${RESET}  ${DIM}Plan → Contract → Build → Eval${RESET}   ${BOLD}${FG.cyan}│${RESET}`);
+    this.log(`  ${BOLD}${FG.cyan}└─────────────────────────────────────┘${RESET}`);
+    this.log(`  ${DIM}Type your prompt, or /run <prompt>${RESET}`);
     this.log("");
   }
 
@@ -276,7 +295,7 @@ export class CodingStudioTUI {
   agentLog(agent: "planner" | "generator" | "evaluator" | "user" | "system", text: string): void {
     this.flushTextBuffer();
     const s = AGENT_STYLES[agent];
-    this.log(`  ${c(s.color, s.icon)} ${c(s.color, s.label, true)}  ${text}`);
+    this.log(`  ${c(s.color, s.icon, true)} ${c(s.color, s.label, true)}  ${text}`);
   }
 
   // ── Streaming text ──
@@ -338,34 +357,36 @@ export class CodingStudioTUI {
     const v = verdict === "pass";
     const vStr = v ? c("green", "PASS", true) : c("red", "FAIL", true);
     const sStr = v ? c("green", score.toFixed(1)) : c("red", score.toFixed(1));
+    const st = stars(score);
 
     this.log("");
-    this.log(`  ┌─ Eval Result: ${vStr} ${sStr}/10 ${"─".repeat(40)}`);
+    this.log(`  ╔${"═".repeat(52)}╗`);
+    this.log(`  ║  ${c("magenta", "◉‿◉", true)} Eval Result: ${vStr}  ${sStr}/10  ${st}${" ".repeat(Math.max(0, 10 - scores.length))}║`);
+    this.log(`  ╠${"═".repeat(52)}╣`);
 
     for (const s of scores) {
       const sc = s.score >= 7 ? c("green", String(s.score)) : s.score >= 5 ? c("yellow", String(s.score)) : c("red", String(s.score));
-      const bar = "█".repeat(Math.round(s.score)) + `${DIM}${"░".repeat(10 - Math.round(s.score))}${RESET}`;
-      this.log(`  │ ${s.name.padEnd(18)} ${bar} ${sc}  ${DIM}${s.feedback.slice(0, 50)}${RESET}`);
+      const barLen = Math.round(s.score);
+      const bar = `${FG.cyan}${"█".repeat(barLen)}${RESET}${DIM}${"░".repeat(10 - barLen)}${RESET}`;
+      this.log(`  ║  ${s.name.padEnd(16)} ${bar} ${sc}  ${DIM}${s.feedback.slice(0, 30)}${RESET}`);
     }
 
     if (blockers.length > 0) {
-      this.log(`  │`);
-      this.log(`  │ ${c("red", "Blockers:", true)}`);
+      this.log(`  ╟${"─".repeat(52)}╢`);
       for (const b of blockers) {
-        this.log(`  │  ${c("red", "✖")} ${b.description.slice(0, 100)}`);
+        this.log(`  ║  ${c("red", "✖ " + b.description.slice(0, 46))}`);
       }
     }
 
     if (bugs.length > 0) {
-      this.log(`  │`);
-      this.log(`  │ ${c("yellow", "Bugs:", true)}`);
-      for (const bug of bugs.slice(0, 5)) {
+      this.log(`  ╟${"─".repeat(52)}╢`);
+      for (const bug of bugs.slice(0, 3)) {
         const loc = bug.location ? `${DIM}(${bug.location})${RESET} ` : "";
-        this.log(`  │  ${c("yellow", "⚠")} ${loc}${bug.description.slice(0, 80)}`);
+        this.log(`  ║  ${c("yellow", "⚠")} ${loc}${bug.description.slice(0, 42)}`);
       }
     }
 
-    this.log(`  └${"─".repeat(60)}`);
+    this.log(`  ╚${"═".repeat(52)}╝`);
   }
 
   // ── Decision logging ──
@@ -529,7 +550,7 @@ export class CodingStudioTUI {
         if (this.currentPhase) {
           const prevIcon = PHASE_ICONS[this.currentPhase] ?? "●";
           const lineCount = this.allLines.length - this.phaseStartIndex;
-          const summary = `  ${FG.green}✓${RESET} ${prevIcon} ${this.currentPhase.toUpperCase()} ${DIM}(${lineCount} lines)${RESET}`;
+          const summary = `  ${FG.green}✓${RESET} ${prevIcon}  ${BOLD}${this.currentPhase.toUpperCase()}${RESET} ${DIM}··· ${lineCount} lines ···${RESET}`;
           this.phaseSummaries.push({
             summary,
             lineStart: this.phaseStartIndex,
@@ -540,10 +561,15 @@ export class CodingStudioTUI {
         this.currentPhase = event.phase;
         this.phaseStartIndex = this.allLines.length;
 
-        const icon = PHASE_ICONS[event.phase] ?? "●";
-        this.log("");
-        this.log(`  ${BOLD}${icon} ${event.phase.toUpperCase()}${RESET}`);
-        this.log(`  ${DIM}${"─".repeat(50)}${RESET}`);
+        const pa = PHASE_ART[event.phase];
+        if (pa) {
+          this.log("");
+          this.log(`  ${BOLD}${c(AGENT_STYLES[event.phase === "building" ? "generator" : event.phase === "evaluating" ? "evaluator" : "planner"].color, pa.icon)} ${pa.bar}${RESET}`);
+        } else {
+          this.log("");
+          this.log(`  ${BOLD}● ${event.phase.toUpperCase()}${RESET}`);
+          this.log(`  ${DIM}${"─".repeat(50)}${RESET}`);
+        }
         this.updateStatusBar("Running");
         this.renderStatusPanel();
         break;
@@ -554,7 +580,9 @@ export class CodingStudioTUI {
         this.lastAgent = "";
         this.currentRound = event.round;
         this.log("");
-        this.log(`  ${c("yellow", `═══ Round ${event.round} ═══`, true)}`);
+        this.log(`  ${FG.yellow}${BOLD}  ╭──────────────────╮${RESET}`);
+        this.log(`  ${FG.yellow}${BOLD}  │  ⚡ Round ${String(event.round).padEnd(2)}     │${RESET}`);
+        this.log(`  ${FG.yellow}${BOLD}  ╰──────────────────╯${RESET}`);
         this.updateStatusBar("Running");
         this.renderStatusPanel();
         break;
@@ -598,14 +626,18 @@ export class CodingStudioTUI {
       case "complete": {
         this.flushTextBuffer();
         const h = event.status.history;
-        const lastScore = h.length > 0 ? (h[h.length - 1].score?.toFixed(1) ?? "—") : "—";
+        const lastScoreVal = h.length > 0 ? (h[h.length - 1].score ?? 0) : 0;
+        const lastScoreStr = lastScoreVal > 0 ? lastScoreVal.toFixed(1) : "—";
         const elapsed = this.startTime > 0 ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
         const m = Math.floor(elapsed / 60);
         const s = elapsed % 60;
+        const st = stars(lastScoreVal);
 
         this.log("");
-        this.log(`  ${c("green", "✓  Pipeline complete", true)}`);
-        this.log(`  ${DIM}Mode: ${event.status.mode} | Rounds: ${h.length} | Score: ${lastScore} | Time: ${m}:${String(s).padStart(2, "0")}${RESET}`);
+        this.log(`  ${FG.green}${BOLD}╔════════════════════════════════════════╗${RESET}`);
+        this.log(`  ${FG.green}${BOLD}║${RESET}  ${c("green", "⊙ω⊙", true)}  ${c("green", "Pipeline Complete!", true)}  ${st}     ${FG.green}${BOLD}║${RESET}`);
+        this.log(`  ${FG.green}${BOLD}║${RESET}  ${DIM}Rounds: ${h.length} | Score: ${lastScoreStr}/10 | ${m}:${String(s).padStart(2, "0")}${RESET}    ${FG.green}${BOLD}║${RESET}`);
+        this.log(`  ${FG.green}${BOLD}╚════════════════════════════════════════╝${RESET}`);
         this.log("");
 
         this.running = false;
