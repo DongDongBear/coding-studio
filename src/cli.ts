@@ -472,12 +472,23 @@ program
             artifactStore,
           };
 
-          // TUI default: full-auto (no pauses). User can type feedback anytime.
+          // TUI: key decisions pause with 2-min auto-continue timeout
           const orch = new Orchestrator(deps, {
             mode,
             maxRounds: config.evaluation.maxRounds,
-            interactive: false,
+            interactive: true,
             cwd: process.cwd(),
+            onPause: async (reason) => {
+              const { response, auto: wasAuto } = await tui.waitForDecision(reason);
+              if (response === "/abort" || response === "abort") {
+                tui.logDecision(reason, "ABORTED by user", false);
+                return false;
+              }
+              if (response && !wasAuto) {
+                tui.agentLog("user", response);
+              }
+              return true;
+            },
           });
 
           currentOrchestrator = orch;
@@ -490,6 +501,7 @@ program
               tui.agentLog("system", "Pipeline stopped.");
             })
             .finally(() => {
+              tui.flushDecisionLog();
               tui.setRunning(false);
               currentOrchestrator = null;
             });
