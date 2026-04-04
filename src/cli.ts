@@ -394,12 +394,22 @@ program
   .action(async () => {
     const tui = new CodingStudioTUI();
 
-    tui.agentLog("system", "Welcome to Coding Studio!");
-    tui.agentLog(
-      "system",
-      "Commands: /run <prompt>  /agent  /status  /abort  /quit",
-    );
-    tui.agentLog("system", "Plain text is queued as steering for the pipeline.");
+    // Check for resumable session
+    const resumeConfigPath = getConfigPath();
+    const resumeConfig = loadConfig(resumeConfigPath);
+    const resumeArtifactsDir = path.resolve(process.cwd(), resumeConfig.pipeline.artifactsDir);
+    const resumeStore = new ArtifactStore(resumeArtifactsDir);
+    const savedStatus = resumeStore.readStatus();
+    const canResume = savedStatus && savedStatus.phase !== "completed" && savedStatus.phase !== "failed"
+      && resumeStore.readSpec() && resumeStore.listEvalReports().length > 0;
+
+    if (canResume) {
+      const rounds = resumeStore.listEvalReports().length;
+      tui.agentLog("system", `Found incomplete session (${rounds} rounds done, phase: ${savedStatus!.phase})`);
+      tui.agentLog("system", "Type /resume to continue, or start fresh with a new prompt.");
+    } else {
+      tui.agentLog("system", "Type your prompt to start building.");
+    }
 
     let currentOrchestrator: Orchestrator | null = null;
 
@@ -499,6 +509,78 @@ program
             .catch((err: Error) => {
               tui.agentLog("system", `Pipeline error: ${err.message}`);
               tui.agentLog("system", "Pipeline stopped.");
+            })
+            .finally(() => {
+              tui.flushDecisionLog();
+              tui.setRunning(false);
+              currentOrchestrator = null;
+            });
+          break;
+        }
+
+        case "resume": {
+          if (tui.isRunning()) {
+            tui.agentLog("system", "Pipeline already running.");
+            return;
+          }
+          const rConfig = loadConfig(getConfigPath());
+          const rDir = path.resolve(process.cwd(), rConfig.pipeline.artifactsDir);
+          const rStore = new ArtifactStore(rDir);
+          const rSpec = rStore.readSpec();
+          if (!rSpec) {
+            tui.agentLog("system", "No saved session to resume. Use /run <prompt> instead.");
+            return;
+          }
+          tui.agentLog("system", "Resuming previous session...");
+          // Trigger /run with the original prompt (orchestrator detects saved state and resumes)
+          (this as any)?.onCommand?.("run", rSpec.slice(0, 100)); // fallback prompt
+          // Actually, just call run handler directly:
+          tui.setRunning(true);
+          tui.agentLog("system", "Starting pipeline...");
+
+          const rcfg = loadConfig(getConfigPath());
+          const rauthStorage = AuthStorage.create(AUTH_PATH);
+          const rrotator = new KeyRotator(rauthStorage);
+          const rgetApiKey = (provider: string) => rrotator.resolveKeyForProvider(provider);
+          const rmode: PipelineMode = rcfg.pipeline.mode && isValidMode(rcfg.pipeline.mode) ? rcfg.pipeline.mode : "iterative-qa";
+          const rartifactsDir = path.resolve(process.cwd(), rcfg.pipeline.artifactsDir);
+          const rartifactStore = new ArtifactStore(rartifactsDir);
+
+          const rdeps: OrchestratorDeps = {
+            planner: new Planner(rcfg.planner, rcfg.models.planner, rgetApiKey),
+            generator: new Generator(rcfg.generator),
+            evaluator: new Evaluator(
+              { criteria: rcfg.evaluation.criteria, passRules: rcfg.evaluation.passRules },
+              rcfg.models.evaluator,
+              getStrategy(rcfg.evaluation.strategy, rcfg.evaluation),
+              rgetApiKey, process.cwd(),
+            ),
+            contractDrafter: new ContractDrafterAgent(rcfg.models.evaluator, rgetApiKey, process.cwd()),
+            contractManager: new ContractManager(rcfg.pipeline.contract, rartifactsDir),
+            runtimeManager: new RuntimeManager(rcfg.runtime),
+            checkpointManager: new CheckpointManager(rcfg.generator.checkpoint, rartifactsDir),
+            artifactStore: rartifactStore,
+          };
+
+          const rOrch = new Orchestrator(rdeps, {
+            mode: rmode,
+            maxRounds: rcfg.evaluation.maxRounds,
+            interactive: true,
+            cwd: process.cwd(),
+            onPause: async (reason) => {
+              const { response, auto: wasAuto } = await tui.waitForDecision(reason);
+              if (response === "/abort" || response === "abort") return false;
+              if (response && !wasAuto) tui.agentLog("user", response);
+              return true;
+            },
+          });
+
+          currentOrchestrator = rOrch;
+          rOrch.onEvent((event) => tui.handleOrchestratorEvent(event));
+
+          rOrch.run(rSpec) // use saved spec as the "prompt" — orchestrator will detect saved state
+            .catch((err: Error) => {
+              tui.agentLog("system", `Pipeline error: ${err.message}`);
             })
             .finally(() => {
               tui.flushDecisionLog();

@@ -78,19 +78,37 @@ export class Orchestrator {
 
   async run(userPrompt: string): Promise<PipelineStatus> {
     const steps = getStepsForMode(this.config.mode);
-    const status: PipelineStatus = {
-      phase: "planning",
-      mode: this.config.mode,
-      currentRound: 0,
-      maxRounds: this.config.maxRounds,
-      history: [],
-    };
+
+    // --- Resume detection ---
+    const savedStatus = this.deps.artifactStore.readStatus();
+    const savedSpec = this.deps.artifactStore.readSpec();
+    const savedContract = this.deps.artifactStore.readContract();
+    const completedRounds = this.deps.artifactStore.listEvalReports().length;
+
+    const canResume = savedSpec && savedStatus && savedStatus.phase !== "completed"
+      && savedStatus.phase !== "failed" && completedRounds > 0;
 
     let spec = "";
     let contract = "";
+    let startRound = 1;
 
-    // --- Plan ---
-    if (steps.plan) {
+    if (canResume) {
+      spec = savedSpec;
+      contract = savedContract ?? "";
+      startRound = completedRounds + 1;
+      this.emit({ type: "log", message: `Resuming from round ${startRound} (${completedRounds} completed rounds found)` });
+    }
+
+    const status: PipelineStatus = {
+      phase: "planning",
+      mode: this.config.mode,
+      currentRound: canResume ? completedRounds : 0,
+      maxRounds: this.config.maxRounds,
+      history: canResume && savedStatus ? savedStatus.history : [],
+    };
+
+    // --- Plan (skip if resuming) ---
+    if (steps.plan && !canResume) {
       this.emit({ type: "phase", phase: "planning" });
       this.emit({ type: "log", message: "Running Planner..." });
       spec = await this.deps.planner.plan(userPrompt, (e) => {
@@ -119,8 +137,8 @@ export class Orchestrator {
       spec = userPrompt;
     }
 
-    // --- Contract ---
-    if (steps.contract && this.deps.contractManager.isEnabled()) {
+    // --- Contract (skip if resuming) ---
+    if (steps.contract && this.deps.contractManager.isEnabled() && !canResume) {
       this.emit({ type: "phase", phase: "contracting" });
 
       if (this.deps.contractDrafter && this.deps.evaluator.reviewContract) {
@@ -185,8 +203,10 @@ export class Orchestrator {
     // --- Build/Eval Loop ---
     let lastReport: EvalReport | undefined;
 
-    for (let round = 1; round <= this.config.maxRounds; round++) {
+    for (let round = startRound; round <= this.config.maxRounds; round++) {
       status.currentRound = round;
+      status.phase = "building";
+      this.deps.artifactStore.writeStatus(status);
 
       // Build
       this.emit({ type: "phase", phase: "building" });

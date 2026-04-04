@@ -373,21 +373,33 @@ export class CodingStudioTUI {
 
     return new Promise((resolve) => {
       let settled = false;
-      let countdown: ReturnType<typeof setInterval> | null = null;
+      let ticker: ReturnType<typeof setInterval> | null = null;
       const deadline = Date.now() + TIMEOUT_MS;
 
-      // Show countdown in status panel
-      countdown = setInterval(() => {
-        const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-        const m = Math.floor(remaining / 60);
-        const s = remaining % 60;
-        this.updateStatusBar(`Waiting for input ${FG.yellow}${m}:${String(s).padStart(2, "0")}${RESET}`);
+      // Show initial countdown message
+      const fmtTime = (ms: number) => {
+        const sec = Math.max(0, Math.ceil(ms / 1000));
+        return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+      };
+
+      this.log("");
+      this.log(`  ${FG.yellow}${BOLD}⏸  PAUSE${RESET}  ${reason}`);
+      this.log(`  ${DIM}Enter to continue, type feedback, or /abort  │  auto-continue in ${fmtTime(TIMEOUT_MS)}${RESET}`);
+
+      // Update countdown every second — rewrite last log line via status bar
+      ticker = setInterval(() => {
+        const remaining = deadline - Date.now();
+        const timeStr = fmtTime(remaining);
+        this.updateStatusBar(`${FG.yellow}⏸ Waiting${RESET} ${timeStr}`);
+        this.renderStatusPanel();
+
         if (remaining <= 0 && !settled) {
           settled = true;
-          if (countdown) clearInterval(countdown);
+          if (ticker) clearInterval(ticker);
           this.inputResolver = null;
-          this.log(`  ${DIM}Auto-continuing (2min timeout)${RESET}`);
+          this.log(`  ${DIM}⏩ Auto-continuing (2min timeout reached)${RESET}`);
           this.logDecision(reason, "(auto-continue)", true);
+          this.updateStatusBar("Running");
           resolve({ response: "", auto: true });
         }
       }, 1000);
@@ -396,9 +408,10 @@ export class CodingStudioTUI {
       this.inputResolver = (value: string) => {
         if (settled) return;
         settled = true;
-        if (countdown) clearInterval(countdown);
+        if (ticker) clearInterval(ticker);
         const action = value || "(continue)";
         this.logDecision(reason, action, false);
+        this.updateStatusBar("Running");
         resolve({ response: value, auto: false });
       };
     });
@@ -521,11 +534,8 @@ export class CodingStudioTUI {
         break;
 
       case "pause":
+        // Display handled by waitForDecision() — just flush buffer
         this.flushTextBuffer();
-        this.log("");
-        this.log(`  ${c("yellow", "⏸  PAUSE", true)}  ${event.reason}`);
-        this.log(`  ${DIM}Press Enter to continue, or type feedback / /abort${RESET}`);
-        this.updateStatusBar("Paused");
         break;
 
       case "complete": {
