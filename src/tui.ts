@@ -134,24 +134,54 @@ export class CodingStudioTUI {
     if (this.externalUIActive) return;
 
     const cols = process.stdout.columns || 80;
+    const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
+
+    // ── Top separator: commands/hints ──
     const hint = this.running
       ? " type to chat with planner "
       : " ↑↓ history · /run /resume /agent /quit ";
-    const hintLen = hint.length;
-    const leftPad = 2;
-    const rightPad = Math.max(0, cols - leftPad - hintLen);
-    const topSep = `${FG.cyan}${"─".repeat(leftPad)}${hint}${"─".repeat(rightPad)}${RESET}`;
-    const bottomSep = `${FG.cyan}${"─".repeat(cols)}${RESET}`;
-    const icon = this.running ? `${FG.yellow}${BOLD}⚡${RESET}` : `${FG.cyan}${BOLD}❯${RESET}`;
+    const topPad = Math.max(0, cols - 2 - hint.length);
+    const topSep = `${FG.cyan}${"─".repeat(2)}${hint}${"─".repeat(topPad)}${RESET}`;
+
+    // ── Bottom separator: status line ──
+    let status = "";
+    if (this.running) {
+      const phaseIcon = PHASE_ICONS[this.currentPhase] ?? "●";
+      const elapsed = this.fmtElapsed();
+      const parts = [
+        `${phaseIcon} ${this.currentPhase || "starting"}`,
+        this.currentRound > 0 ? `R${this.currentRound}` : null,
+        `${elapsed}`,
+        this.lastScore !== "—" ? `score: ${this.lastScore}` : null,
+        this.lastVerdict ? (this.lastVerdict === "pass" ? `${FG.green}PASS${RESET}` : `${FG.red}FAIL${RESET}`) : null,
+      ].filter(Boolean).join("  ·  ");
+      status = ` ${parts} `;
+    } else {
+      status = ` ${DIM}ready${RESET} `;
+    }
+    const botPad = Math.max(0, cols - 2 - this.stripAnsi(status).length);
+    const bottomSep = `${FG.cyan}${"─".repeat(2)}${RESET}${status}${FG.cyan}${"─".repeat(botPad)}${RESET}`;
 
     process.stdout.write(topSep + "\n");
     this.rl.setPrompt(` ${icon} `);
     this.rl.prompt(true);
-    // Write bottom sep below prompt, then move cursor back up to input line
     process.stdout.write("\n" + bottomSep);
-    readline.moveCursor(process.stdout, 0, -1); // back to input line
-    readline.cursorTo(process.stdout, 4);        // after " ❯ "
+    readline.moveCursor(process.stdout, 0, -1);
+    readline.cursorTo(process.stdout, 4);
     this.promptVisible = true;
+  }
+
+  private lastScore = "—";
+  private lastVerdict = "";
+
+  private fmtElapsed(): string {
+    if (!this.startTime || !this.running) return "0:00";
+    const s = Math.floor((Date.now() - this.startTime) / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  private stripAnsi(s: string): string {
+    return s.replace(/\x1b\[[0-9;]*m/g, "");
   }
 
   // ── History replay for /resume ──
@@ -234,6 +264,8 @@ export class CodingStudioTUI {
       this.startTime = Date.now();
       this.currentPhase = "";
       this.currentRound = 0;
+      this.lastScore = "—";
+      this.lastVerdict = "";
     }
     this.showPrompt();
   }
@@ -513,6 +545,8 @@ export class CodingStudioTUI {
         break;
       case "eval":
         this.flushTextBuffer();
+        this.lastScore = event.report.overallScore.toFixed(1);
+        this.lastVerdict = event.report.verdict;
         this.evalLog(event.report.verdict, event.report.overallScore,
           event.report.scores, event.report.blockers, event.report.bugs);
         break;
