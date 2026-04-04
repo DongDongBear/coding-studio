@@ -199,52 +199,62 @@ export class CodingStudioTUI {
     }>;
     status?: { phase: string; currentRound: number; maxRounds: number };
   }): void {
-    this.out(`  ${c("blue", "⚙", true)} ${c("blue", "System", true)}  Restoring previous session...`);
-    this.out("");
+    // Batch output — write everything at once to avoid prompt flicker
+    const lines: string[] = [];
+    const w = (s: string) => lines.push(s);
 
-    // Spec summary
+    w(`  ${c("blue", "⚙", true)} ${c("blue", "System", true)}  Restoring previous session...`);
+    w("");
+
     if (artifacts.spec) {
-      this.out(`  ${c("cyan", "⊙ω⊙ ━━━ PLANNING (restored) ━━━━━━━━━━", true)}`);
+      w(`  ${c("cyan", "⊙ω⊙ ━━━ PLANNING (restored) ━━━━━━━━━━", true)}`);
       const specLines = artifacts.spec.split("\n").slice(0, 8);
-      for (const line of specLines) {
-        this.out(`  ${DIM}│${RESET} ${line}`);
-      }
-      if (artifacts.spec.split("\n").length > 8) {
-        this.out(`  ${DIM}│ ... (${artifacts.spec.split("\n").length} lines total)${RESET}`);
-      }
-      this.out("");
+      for (const line of specLines) w(`  ${DIM}│${RESET} ${line}`);
+      const totalLines = artifacts.spec.split("\n").length;
+      if (totalLines > 8) w(`  ${DIM}│ ... (${totalLines} lines total)${RESET}`);
+      w("");
     }
 
-    // Contract summary
     if (artifacts.contract) {
-      this.out(`  ${c("cyan", "✍  ━━━ CONTRACTING (restored) ━━━━━━━━", true)}`);
+      w(`  ${c("cyan", "✍  ━━━ CONTRACTING (restored) ━━━━━━━━", true)}`);
       const contractLines = artifacts.contract.split("\n").slice(0, 6);
-      for (const line of contractLines) {
-        this.out(`  ${DIM}│${RESET} ${line}`);
-      }
-      if (artifacts.contract.split("\n").length > 6) {
-        this.out(`  ${DIM}│ ... (${artifacts.contract.split("\n").length} lines total)${RESET}`);
-      }
-      this.out("");
+      for (const line of contractLines) w(`  ${DIM}│${RESET} ${line}`);
+      const totalLines = artifacts.contract.split("\n").length;
+      if (totalLines > 6) w(`  ${DIM}│ ... (${totalLines} lines total)${RESET}`);
+      w("");
     }
 
-    // Eval reports
     if (artifacts.evalReports && artifacts.evalReports.length > 0) {
       for (const report of artifacts.evalReports) {
         const v = report.verdict === "pass";
         const vStr = v ? c("green", "PASS", true) : c("red", "FAIL", true);
         const sStr = v ? c("green", report.overallScore.toFixed(1)) : c("red", report.overallScore.toFixed(1));
-        this.out(`  ${DIM}Round ${report.round}:${RESET} ${vStr} ${sStr}/10  ${DIM}${report.summary.slice(0, 60)}${RESET}`);
+        w(`  ${DIM}Round ${report.round}:${RESET} ${vStr} ${sStr}/10  ${DIM}${report.summary.slice(0, 60)}${RESET}`);
       }
-      this.out("");
+      w("");
     }
 
-    // Current state
     if (artifacts.status) {
-      const icon = PHASE_ICONS[artifacts.status.phase] ?? "●";
-      this.out(`  ${c("yellow", "▸", true)} Resuming from ${BOLD}${artifacts.status.phase}${RESET} phase, round ${artifacts.status.currentRound}/${artifacts.status.maxRounds}`);
-      this.out("");
+      w(`  ${c("yellow", "▸", true)} Resuming from ${BOLD}${artifacts.status.phase}${RESET} phase, round ${artifacts.status.currentRound}/${artifacts.status.maxRounds}`);
+      w("");
     }
+
+    // Clear prompt if visible, write all lines at once, redraw prompt once
+    if (this.promptVisible) {
+      readline.moveCursor(process.stdout, 0, -1);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, 1);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, 1);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      readline.moveCursor(process.stdout, 0, -2);
+      this.promptVisible = false;
+    }
+    process.stdout.write(lines.join("\n") + "\n");
+    this.showPrompt();
   }
 
   // ── Public API ──
@@ -475,26 +485,29 @@ export class CodingStudioTUI {
 
     return new Promise((resolve) => {
       let settled = false;
-      const deadline = Date.now() + TIMEOUT_MS;
+      let deadline = Date.now() + TIMEOUT_MS;
 
       this.out("");
       this.out(`  ${c("yellow", "⏸  PAUSE", true)}  ${reason}`);
-      this.out(`  ${DIM}Enter to continue, type feedback, or /abort  │  auto-continue in 2:00${RESET}`);
+      this.out(`  ${DIM}Enter to continue, type feedback, or /abort  │  auto-continue in 0:30${RESET}`);
+
+      // Reset timer on any keypress (user is typing)
+      const onKeypress = () => { deadline = Date.now() + TIMEOUT_MS; };
+      process.stdin.on("keypress", onKeypress);
 
       const ticker = setInterval(() => {
         const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-        const m = Math.floor(remaining / 60);
         const s = remaining % 60;
 
-        // Update prompt with countdown
-        this.rl.setPrompt(`${FG.yellow}${BOLD}⏸ ${m}:${String(s).padStart(2, "0")}${RESET} ${FG.cyan}❯${RESET} `);
+        this.rl.setPrompt(`${FG.yellow}${BOLD}⏸ 0:${String(s).padStart(2, "0")}${RESET} ${FG.cyan}❯${RESET} `);
         this.rl.prompt(true);
 
         if (remaining <= 0 && !settled) {
           settled = true;
           clearInterval(ticker);
+          process.stdin.removeListener("keypress", onKeypress);
           this.inputResolver = null;
-          this.out(`  ${DIM}⏩ Auto-continuing (timeout)${RESET}`);
+          this.out(`  ${DIM}⏩ Auto-continuing (30s no input)${RESET}`);
           this.logDecision(reason, "(auto-continue)", true);
           resolve({ response: "", auto: true });
         }
@@ -504,6 +517,7 @@ export class CodingStudioTUI {
         if (settled) return;
         settled = true;
         clearInterval(ticker);
+        process.stdin.removeListener("keypress", onKeypress);
         this.logDecision(reason, value || "(continue)", false);
         resolve({ response: value, auto: false });
       };
