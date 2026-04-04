@@ -75,6 +75,11 @@ export class CodingStudioTUI {
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private prompt = "";
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
+  // Folding: track all log lines and per-phase line counts
+  private allLines: string[] = [];
+  private phaseStartIndex: number = 0;  // line index where current phase started
+  private phaseSummaries: Array<{ summary: string; lineStart: number; lineEnd: number }> = [];
+  private folded = false;
 
   constructor() {
     this.screen = blessed.screen({
@@ -100,7 +105,7 @@ export class CodingStudioTUI {
     });
     this.updateStatusBar("Ready");
 
-    // ── Main output (scrollable via keyboard, mouse free for text selection) ──
+    // ── Main output (mouse scroll + Shift+drag to select/copy text) ──
     this.outputArea = blessed.log({
       top: 1,
       left: 0,
@@ -108,8 +113,8 @@ export class CodingStudioTUI {
       height: "100%-6",
       scrollable: true,
       alwaysScroll: true,
-      scrollbar: { ch: " ", style: { bg: "gray" } } as any,
-      mouse: false, // Let terminal handle mouse selection/copy
+      scrollbar: { ch: "▐", style: { fg: "gray" } } as any,
+      mouse: true,
       keys: true,
       vi: true,
       tags: false,
@@ -228,8 +233,44 @@ export class CodingStudioTUI {
   // ── Logging ──
 
   private log(text: string): void {
-    (this.outputArea as any).log(text);
+    this.allLines.push(text);
+    if (!this.folded) {
+      (this.outputArea as any).log(text);
+      this.screen.render();
+    }
+  }
+
+  /** Fold: collapse completed phases into 1-line summaries */
+  fold(): void {
+    this.folded = true;
+    (this.outputArea as any).setContent("");
+
+    // Render summaries for completed phases
+    for (const ps of this.phaseSummaries) {
+      (this.outputArea as any).log(ps.summary);
+    }
+
+    // Render current phase lines (not yet summarized)
+    const currentStart = this.phaseSummaries.length > 0
+      ? this.phaseSummaries[this.phaseSummaries.length - 1].lineEnd
+      : 0;
+    for (let i = currentStart; i < this.allLines.length; i++) {
+      (this.outputArea as any).log(this.allLines[i]);
+    }
+
     this.screen.render();
+    this.folded = false; // resume normal logging
+  }
+
+  /** Unfold: show all lines */
+  unfold(): void {
+    this.folded = true;
+    (this.outputArea as any).setContent("");
+    for (const line of this.allLines) {
+      (this.outputArea as any).log(line);
+    }
+    this.screen.render();
+    this.folded = false;
   }
 
   agentLog(agent: "planner" | "generator" | "evaluator" | "user" | "system", text: string): void {
@@ -455,9 +496,10 @@ export class CodingStudioTUI {
     const score = this.lastScore;
     const verdict = this.lastVerdict ? (this.lastVerdict === "pass" ? `${FG.green}PASS${RESET}` : `${FG.red}FAIL${RESET}`) : "—";
 
-    const infoLine = `  ${DIM}Time:${RESET} ${elapsed}  ${DIM}Round:${RESET} ${round}  ${DIM}Score:${RESET} ${score}  ${DIM}Last:${RESET} ${verdict}  ${DIM}│${RESET}  ${DIM}/run  /agent  /abort  /quit${RESET}`;
+    const infoLine = `  ${DIM}Time:${RESET} ${elapsed}  ${DIM}Round:${RESET} ${round}  ${DIM}Score:${RESET} ${score}  ${DIM}Last:${RESET} ${verdict}`;
+    const cmdsLine = `  ${DIM}/run  /agent  /resume  /fold  /unfold  /clear  /abort  /quit  │  Shift+drag to copy${RESET}`;
 
-    this.statusPanel.setContent(`${sep}\n${phaseLine.length > 0 ? `  ${phaseLine}` : ""}\n${infoLine}\n  ${DIM}Type your prompt to start, or use commands above${RESET}`);
+    this.statusPanel.setContent(`${sep}\n${phaseLine.length > 0 ? `  ${phaseLine}` : ""}\n${infoLine}\n${cmdsLine}`);
     this.screen.render();
   }
 
@@ -482,7 +524,22 @@ export class CodingStudioTUI {
       case "phase": {
         this.flushTextBuffer();
         this.lastAgent = "";
+
+        // Auto-collapse previous phase into a summary line
+        if (this.currentPhase) {
+          const prevIcon = PHASE_ICONS[this.currentPhase] ?? "●";
+          const lineCount = this.allLines.length - this.phaseStartIndex;
+          const summary = `  ${FG.green}✓${RESET} ${prevIcon} ${this.currentPhase.toUpperCase()} ${DIM}(${lineCount} lines)${RESET}`;
+          this.phaseSummaries.push({
+            summary,
+            lineStart: this.phaseStartIndex,
+            lineEnd: this.allLines.length,
+          });
+        }
+
         this.currentPhase = event.phase;
+        this.phaseStartIndex = this.allLines.length;
+
         const icon = PHASE_ICONS[event.phase] ?? "●";
         this.log("");
         this.log(`  ${BOLD}${icon} ${event.phase.toUpperCase()}${RESET}`);
@@ -602,6 +659,23 @@ export class CodingStudioTUI {
       const cmd = parts[0] ?? "";
       const args = parts.slice(1).join(" ");
       this.onCommand?.(cmd, args);
+      return;
+    }
+
+    // Built-in view commands
+    if (value === "/fold" || value === "/collapse") {
+      this.fold();
+      return;
+    }
+    if (value === "/unfold" || value === "/expand") {
+      this.unfold();
+      return;
+    }
+    if (value === "/clear") {
+      this.allLines = [];
+      this.phaseSummaries = [];
+      (this.outputArea as any).setContent("");
+      this.screen.render();
       return;
     }
 
