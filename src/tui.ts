@@ -57,18 +57,8 @@ export class CodingStudioTUI {
   private currentPhase = "";
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
-  private rows = 0;
-  private statusText = "";
 
   constructor() {
-    // Set up fixed bottom input using ANSI scroll region
-    this.rows = process.stdout.rows || 24;
-
-    process.stdout.on("resize", () => {
-      this.rows = process.stdout.rows || 24;
-      this.setupScrollRegion();
-    });
-
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -80,15 +70,7 @@ export class CodingStudioTUI {
       this.showPrompt();
     });
 
-    this.rl.on("close", () => {
-      this.resetTerminal();
-      process.exit(0);
-    });
-
-    // Initialize layout
-    process.stdout.write("\x1b[2J\x1b[H"); // clear screen
-    this.setupScrollRegion();
-    this.drawStatusLine();
+    this.rl.on("close", () => process.exit(0));
 
     // Welcome
     this.out("");
@@ -96,70 +78,26 @@ export class CodingStudioTUI {
     this.out(`  ${c("cyan", "│", true)}  ${c("cyan", "⊙ω⊙", true)} ${BOLD}Coding Studio${RESET}              ${c("cyan", "│", true)}`);
     this.out(`  ${c("cyan", "│", true)}  ${DIM}Plan → Contract → Build → Eval${RESET}   ${c("cyan", "│", true)}`);
     this.out(`  ${c("cyan", "└─────────────────────────────────────┘", true)}`);
-    this.out(`  ${DIM}Type your prompt, or /run <prompt>  |  /agent /quit${RESET}`);
+    this.out(`  ${DIM}Type your prompt, or /run  |  /agent /resume /quit${RESET}`);
     this.out("");
 
     this.showPrompt();
   }
 
-  /** Set terminal scroll region to leave bottom 2 lines for status + input */
-  private setupScrollRegion(): void {
-    // Scroll region: line 1 to (rows - 2)
-    process.stdout.write(`\x1b[1;${this.rows - 2}r`);
-    // Move cursor to top of scroll region
-    process.stdout.write(`\x1b[${this.rows - 2};1H`);
-  }
-
-  /** Reset terminal to normal on exit */
-  private resetTerminal(): void {
-    process.stdout.write(`\x1b[1;${this.rows}r`); // reset scroll region
-    process.stdout.write(`\x1b[${this.rows};1H`);  // move to bottom
-    process.stdout.write("\x1b[K");                 // clear line
-  }
-
-  /** Draw the fixed status line at row (rows - 1) */
-  private drawStatusLine(): void {
-    const info = this.statusText || `${DIM}/run  /agent  /resume  /quit  │  scroll: native  │  select: drag${RESET}`;
-    // Save cursor, move to status line, clear, write, restore
-    process.stdout.write("\x1b[s");
-    process.stdout.write(`\x1b[${this.rows - 1};1H`);
-    process.stdout.write("\x1b[K");
-    process.stdout.write(`${DIM}─${"─".repeat((this.rows > 0 ? process.stdout.columns || 80 : 80) - 1)}${RESET}`);
-    process.stdout.write(`\x1b[${this.rows};1H`);
-    process.stdout.write("\x1b[K");
-    process.stdout.write(` ${info}`);
-    process.stdout.write("\x1b[u");
-  }
-
-  /** Update the status line content */
-  private setStatus(text: string): void {
-    this.statusText = text;
-    this.drawStatusLine();
-  }
-
   // ── Output (straight to stdout — native scroll + selection) ──
 
   private out(text: string): void {
-    // Save cursor, move to scroll region bottom, write, restore
-    process.stdout.write("\x1b[s");                        // save cursor
-    process.stdout.write(`\x1b[${this.rows - 2};1H`);     // move to last line of scroll region
-    process.stdout.write("\n");                             // scroll up
-    process.stdout.write(`\x1b[${this.rows - 2};1H`);     // back to bottom of scroll region
-    process.stdout.write("\x1b[K");                        // clear line
-    process.stdout.write(text);                            // write content
-    process.stdout.write("\x1b[u");                        // restore cursor
+    // Clear current prompt line, write output, prompt redraws after
+    readline.clearLine(process.stdout, 0);
+    readline.cursorTo(process.stdout, 0);
+    process.stdout.write(text + "\n");
   }
 
   private showPrompt(): void {
     const prefix = this.running
       ? `${FG.yellow}${BOLD}⚡${RESET} `
       : `${FG.cyan}${BOLD}❯${RESET} `;
-    // Move cursor to input line (rows - 2 + 1 = rows - 1... actually we use the row after status)
-    // Input line is at row (rows), status at row (rows-1), separator at row...
-    // Actually: scroll region is 1..(rows-2), separator at (rows-1), input at (rows)
     this.rl.setPrompt(prefix);
-    process.stdout.write(`\x1b[${this.rows};1H`);
-    process.stdout.write("\x1b[K");
     this.rl.prompt(true);
   }
 
@@ -175,9 +113,6 @@ export class CodingStudioTUI {
       this.startTime = Date.now();
       this.currentPhase = "";
       this.currentRound = 0;
-      this.setStatus(`${FG.yellow}⚡ Running${RESET}  ${DIM}pipeline active${RESET}`);
-    } else {
-      this.setStatus("");
     }
     this.showPrompt();
   }
@@ -193,7 +128,6 @@ export class CodingStudioTUI {
   hasUserMessages(): boolean { return this.userMessages.length > 0; }
 
   destroy(): void {
-    this.resetTerminal();
     this.rl.close();
   }
 
@@ -364,8 +298,6 @@ export class CodingStudioTUI {
         const a = event.phase === "building" ? "yellow" : event.phase === "evaluating" ? "magenta" : "cyan";
         this.out("");
         this.out(`  ${c(a as keyof typeof FG, `${icon} ━━━ ${event.phase.toUpperCase()} ━━━━━━━━━━━━━━━━━━━━`, true)}`);
-        const rStr = this.currentRound > 0 ? `  R${this.currentRound}` : "";
-        this.setStatus(`${FG.yellow}⚡${RESET} ${icon} ${BOLD}${event.phase}${RESET}${rStr}`);
         break;
       }
       case "round":
