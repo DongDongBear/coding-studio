@@ -472,27 +472,12 @@ program
             artifactStore,
           };
 
+          // TUI default: full-auto (no pauses). User can type feedback anytime.
           const orch = new Orchestrator(deps, {
             mode,
             maxRounds: config.evaluation.maxRounds,
-            interactive: config.pipeline.interactive ?? false,
+            interactive: false,
             cwd: process.cwd(),
-            onPause: async (reason) => {
-              tui.agentLog(
-                "system",
-                `Paused: ${reason}. Press Enter to continue or type /abort.`,
-              );
-              const response = await tui.waitForInput();
-              if (response === "/abort" || response === "abort") {
-                return false;
-              }
-              // Any text typed during pause goes to user messages
-              if (response) {
-                tui.agentLog("user", response);
-                tui.drainUserMessages(); // flush, we already logged it
-              }
-              return true;
-            },
           });
 
           currentOrchestrator = orch;
