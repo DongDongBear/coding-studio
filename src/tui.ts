@@ -2,6 +2,7 @@ import readline from "node:readline";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { select } from "@inquirer/prompts";
 import type { OrchestratorEvent } from "./orchestrator.js";
 
 // ── ANSI helpers ──
@@ -59,7 +60,6 @@ export class CodingStudioTUI {
   private currentRound = 0;
   private decisions: Array<{ time: string; phase: string; reason: string; action: string; auto: boolean }> = [];
   private promptVisible = false;
-  private pickerRendered = false;
   private historyFile: string;
 
   constructor() {
@@ -190,99 +190,46 @@ export class CodingStudioTUI {
   }
 
   /**
-   * Interactive session picker with ↑↓ arrow selection.
-   * Like Claude Code's <Select> component.
+   * Interactive session picker using @inquirer/select (↑↓ + Enter).
    */
-  showSessionPicker(sessions: Array<{
+  async showSessionPicker(sessions: Array<{
     id: string; prompt: string; startedAt: string;
     phase: string; rounds: number; lastScore: number | null; mode: string;
   }>): Promise<number> {
     if (sessions.length === 0) {
       this.out(`  ${DIM}No sessions found.${RESET}`);
-      return Promise.resolve(-1);
+      return -1;
     }
 
-    return new Promise((resolve) => {
-      let selected = 0;
-      const count = sessions.length;
+    // Pause our readline so inquirer can take over stdin
+    this.rl.pause();
 
-      const formatRow = (i: number, highlight: boolean) => {
-        const s = sessions[i];
+    try {
+      const choices = sessions.map((s, i) => {
         const time = s.startedAt.replace("T", " ").slice(5, 16);
-        const phaseColor = s.phase === "completed" || s.phase === "failed" ? "gray" : "yellow";
         const score = s.lastScore !== null ? s.lastScore.toFixed(1) : "—";
-        const prompt = s.prompt.slice(0, 40) + (s.prompt.length > 40 ? "…" : "");
-        const cursor = highlight ? `${FG.cyan}${BOLD}▸${RESET}` : " ";
-        const text = `${time.padEnd(16)}${c(phaseColor as keyof typeof FG, s.phase.padEnd(12))}${String(s.rounds).padEnd(6)}${score.padEnd(6)} ${prompt}`;
-        return highlight ? `  ${cursor} ${BOLD}${text}${RESET}` : `  ${cursor} ${DIM}${text}${RESET}`;
-      };
+        const prompt = s.prompt.slice(0, 45) + (s.prompt.length > 45 ? "…" : "");
+        return {
+          name: `${time}  ${s.phase.padEnd(12)} R${s.rounds}  ${score.padEnd(5)}  ${prompt}`,
+          value: i,
+        };
+      });
 
-      const render = () => {
-        // Move up to clear previous render (header + rows + footer = count + 4)
-        if (this.pickerRendered) {
-          const totalLines = count + 4;
-          readline.moveCursor(process.stdout, 0, -totalLines);
-        }
+      const selected = await select({
+        message: "Select a session to resume:",
+        choices,
+      });
 
-        // Header
-        readline.clearLine(process.stdout, 0);
-        process.stdout.write(`  ${BOLD}Select a session to resume:${RESET}  ${DIM}↑↓ navigate · Enter select · Esc cancel${RESET}\n`);
-        readline.clearLine(process.stdout, 0);
-        process.stdout.write(`  ${DIM}  ${"Time".padEnd(16)}${"Phase".padEnd(12)}${"Rnd".padEnd(6)}${"Score".padEnd(6)} Prompt${RESET}\n`);
-        readline.clearLine(process.stdout, 0);
-        process.stdout.write(`  ${DIM}${"─".repeat(76)}${RESET}\n`);
-
-        // Rows
-        for (let i = 0; i < count; i++) {
-          readline.clearLine(process.stdout, 0);
-          process.stdout.write(formatRow(i, i === selected) + "\n");
-        }
-
-        // Footer
-        readline.clearLine(process.stdout, 0);
-        process.stdout.write("\n");
-
-        this.pickerRendered = true;
-      };
-
-      // Pause readline so we can handle raw keypresses
-      this.rl.pause();
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-
-      this.pickerRendered = false;
-      process.stdout.write("\n");
-      render();
-
-      const onKey = (data: Buffer) => {
-        const key = data.toString();
-
-        if (key === "\x1b[A") { // Up
-          selected = (selected - 1 + count) % count;
-          render();
-        } else if (key === "\x1b[B") { // Down
-          selected = (selected + 1) % count;
-          render();
-        } else if (key === "\r" || key === "\n") { // Enter
-          cleanup();
-          this.out(`  ${c("cyan", "▸", true)} Selected: ${sessions[selected].prompt.slice(0, 50)}`);
-          resolve(selected);
-        } else if (key === "\x1b" || key === "\x03") { // Esc or Ctrl+C
-          cleanup();
-          this.out(`  ${DIM}Cancelled.${RESET}`);
-          resolve(-1);
-        }
-      };
-
-      const cleanup = () => {
-        process.stdin.removeListener("data", onKey);
-        process.stdin.setRawMode(false);
-        this.rl.resume();
-        this.pickerRendered = false;
-      };
-
-      process.stdin.on("data", onKey);
-    });
+      this.rl.resume();
+      this.showPrompt();
+      return selected;
+    } catch {
+      // User pressed Esc/Ctrl+C
+      this.rl.resume();
+      this.out(`  ${DIM}Cancelled.${RESET}`);
+      this.showPrompt();
+      return -1;
+    }
   }
 
   destroy(): void {
