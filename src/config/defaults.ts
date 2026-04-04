@@ -2,7 +2,7 @@ import type { CodingStudioConfig } from "./schema.js";
 
 export const defaultConfig: CodingStudioConfig = {
   models: {
-    planner: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
+    planner: { provider: "openai-codex", model: "gpt-5.4" },
     evaluator: { provider: "anthropic", model: "claude-sonnet-4-20250514" },
   },
   generator: {

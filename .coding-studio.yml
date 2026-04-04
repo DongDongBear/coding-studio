@@ -1,0 +1,80 @@
+# GPT-5.4 负责规划和验收，Claude Code 负责开发
+
+models:
+  planner:
+    provider: openai-codex
+    model: gpt-5.4
+  evaluator:
+    provider: openai-codex
+    model: gpt-5.4
+
+generator:
+  cliCommand: claude
+  allowedTools: [Edit, Write, Bash, Read, Glob, Grep]
+  mcpServers: []
+  maxTurns: 200
+  selfReview: true
+  checkpoint:
+    enabled: true
+    strategy: git-commit
+    everyRound: true
+
+runtime:
+  install:
+    command: npm install
+  build:
+    command: npm run build
+  start:
+    command: npm run dev -- --host 127.0.0.1 --port 5173
+    url: "http://127.0.0.1:5173"
+    readyPattern: "Local:"
+    timeoutSec: 90
+  healthcheck:
+    type: http
+    target: /
+  captureLogs: true
+
+evaluation:
+  mode: iterative
+  strategy: composite
+  maxRounds: 3
+  criteriaProfile: app-default
+  criteria:
+    - name: functionality
+      weight: 1.0
+      description: "游戏核心玩法是否正常工作（移动、碰撞、关卡逻辑）"
+    - name: product_depth
+      weight: 1.0
+      description: "是否有真实的游戏深度，而不是 demo 级别的骨架"
+    - name: code_quality
+      weight: 1.0
+      description: "代码是否清晰可维护，游戏循环是否合理"
+    - name: design_quality
+      weight: 1.25
+      description: "视觉风格是否一致，UI 是否精致"
+    - name: originality
+      weight: 1.25
+      description: "是否有独特的游戏设计决策，避免千篇一律"
+  passRules:
+    overallScore: 7.0
+    minCriterionScore: 5.5
+    blockersFail: true
+    requiredCriteria: [functionality, product_depth]
+
+planner:
+  ambitious: true
+  injectAIFeatures: false
+  techPreferences:
+    frontend: "React + Vite + Canvas/WebGL"
+    backend: "none"
+    database: "none"
+
+pipeline:
+  mode: iterative-qa
+  interactive: true
+  artifactsDir: .coding-studio/
+  resume: true
+  stopOnBlocker: true
+  contract:
+    enabled: true
+    maxRevisions: 2

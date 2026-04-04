@@ -3,3 +3,5 @@ dist/
 .coding-studio/
 *.tsbuildinfo
 .env
+
+test-results/
