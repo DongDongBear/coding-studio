@@ -79,14 +79,22 @@ export class Orchestrator {
   async run(userPrompt: string): Promise<PipelineStatus> {
     const steps = getStepsForMode(this.config.mode);
 
-    // --- Resume detection ---
+    // --- Resume / Continue detection ---
     const savedStatus = this.deps.artifactStore.readStatus();
     const savedSpec = this.deps.artifactStore.readSpec();
     const savedContract = this.deps.artifactStore.readContract();
     const completedRounds = this.deps.artifactStore.listEvalReports().length;
 
-    const canResume = savedSpec && savedStatus && savedStatus.phase !== "completed"
-      && savedStatus.phase !== "failed" && completedRounds > 0;
+    // Three modes:
+    // 1. canResume: interrupted mid-run → skip planning/contracting, continue from next round
+    // 2. canContinue: completed + new prompt → re-plan with existing spec as context
+    // 3. fresh: no saved state → full pipeline from scratch
+    const canResume = savedSpec && savedStatus
+      && savedStatus.phase !== "completed" && savedStatus.phase !== "failed"
+      && completedRounds > 0;
+    const canContinue = savedSpec && savedStatus
+      && (savedStatus.phase === "completed" || savedStatus.phase === "failed")
+      && userPrompt !== savedSpec; // new prompt = continuation
 
     let spec = "";
     let contract = "";
@@ -97,6 +105,9 @@ export class Orchestrator {
       contract = savedContract ?? "";
       startRound = completedRounds + 1;
       this.emit({ type: "log", message: `Resuming from round ${startRound} (${completedRounds} completed rounds found)` });
+    } else if (canContinue) {
+      // Pass existing spec as context to the planner along with new requirements
+      this.emit({ type: "log", message: "Continuing from previous build with new requirements..." });
     }
 
     const status: PipelineStatus = {
@@ -107,11 +118,32 @@ export class Orchestrator {
       history: canResume && savedStatus ? savedStatus.history : [],
     };
 
-    // --- Plan (skip if resuming) ---
+    // --- Plan (skip if resuming mid-run) ---
     if (steps.plan && !canResume) {
       this.emit({ type: "phase", phase: "planning" });
-      this.emit({ type: "log", message: "Running Planner..." });
-      spec = await this.deps.planner.plan(userPrompt, (e) => {
+
+      // If continuing from a completed build, give planner the previous spec as context
+      let plannerPrompt = userPrompt;
+      if (canContinue && savedSpec) {
+        this.emit({ type: "log", message: "Updating spec with new requirements..." });
+        plannerPrompt = [
+          "The following is the EXISTING product specification from a previous build iteration.",
+          "The codebase already implements this spec. The user wants to continue building on it.",
+          "Update the spec to incorporate the new requirements below, keeping what's already built.",
+          "",
+          "# Existing Specification",
+          "",
+          savedSpec,
+          "",
+          "# New Requirements from User",
+          "",
+          userPrompt,
+        ].join("\n");
+      } else {
+        this.emit({ type: "log", message: "Running Planner..." });
+      }
+
+      spec = await this.deps.planner.plan(plannerPrompt, (e) => {
         if (e.type === "text_delta") this.emit({ type: "agent_text", agent: "planner", delta: e.delta });
         if (e.type === "tool_start") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "start", args: e.args });
         if (e.type === "tool_end") this.emit({ type: "tool_use", agent: "planner", tool: e.tool, status: "end", result: e.result });

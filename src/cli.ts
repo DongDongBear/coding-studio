@@ -394,15 +394,20 @@ program
   .action(async () => {
     const tui = new CodingStudioTUI();
 
-    // Show available sessions
+    // Check for existing project state
     const startupConfig = loadConfig(getConfigPath());
     const startupDir = path.resolve(process.cwd(), startupConfig.pipeline.artifactsDir);
     const startupStore = new ArtifactStore(startupDir);
-    const sessions = startupStore.listSessions();
-    const incompleteSessions = sessions.filter((s) => s.phase !== "completed" && s.phase !== "failed");
+    const startupStatus = startupStore.readStatus();
+    const hasSpec = !!startupStore.readSpec();
 
-    if (incompleteSessions.length > 0) {
-      tui.agentLog("system", `${incompleteSessions.length} incomplete session(s) found. Type /resume to pick one.`);
+    if (hasSpec && startupStatus) {
+      const phase = startupStatus.phase;
+      if (phase === "completed" || phase === "failed") {
+        tui.agentLog("system", `Previous build ${phase}. Type /resume to see history & continue, or start fresh.`);
+      } else {
+        tui.agentLog("system", `Interrupted pipeline (${phase}). Type /resume to continue.`);
+      }
     }
 
     let currentOrchestrator: Orchestrator | null = null;
@@ -544,21 +549,37 @@ program
           const rDir = path.resolve(process.cwd(), rConfig.pipeline.artifactsDir);
           const rStore = new ArtifactStore(rDir);
 
-          // Check actual pipeline status (source of truth, not sessions.json)
           const rStatus = rStore.readStatus();
           const rSpec = rStore.readSpec();
-          const actualPhase = rStatus?.phase ?? "unknown";
-          const isResumable = rSpec && rStatus
-            && actualPhase !== "completed" && actualPhase !== "failed";
 
-          if (!isResumable) {
-            tui.agentLog("system", `No incomplete pipeline to resume (status: ${actualPhase}).`);
-            tui.agentLog("system", "Start a new project with /run <prompt>.");
-            tui.agentLog("system", "No sessions found. Use /run <prompt> to start.");
+          if (!rSpec) {
+            tui.agentLog("system", "No previous session found. Use /run <prompt> to start.");
             break;
           }
 
-          // Direct resume — one pipeline state per project
+          const actualPhase = rStatus?.phase ?? "unknown";
+          const isCompleted = actualPhase === "completed" || actualPhase === "failed";
+
+          // Replay history regardless of status
+          tui.replayHistory({
+            spec: rSpec,
+            contract: rStore.readContract() ?? undefined,
+            evalReports: rStore.listEvalReports().map((r) => ({
+              round: r.round, verdict: r.verdict, overallScore: r.overallScore,
+              summary: r.summary, scores: r.scores, blockers: r.blockers, bugs: r.bugs,
+            })),
+            status: rStatus ?? undefined,
+          });
+
+          if (isCompleted) {
+            // Completed: user can type new requirements to continue iterating
+            tui.agentLog("system", "Previous pipeline completed. Type your next requirement to continue building on this project:");
+            // Don't auto-start — wait for user to type their new prompt
+            // Their input will trigger /run via the normal handleInput flow
+            break;
+          }
+
+          // Incomplete: resume from where it stopped
           tui.agentLog("system", `Resuming: ${actualPhase} phase, round ${rStatus!.currentRound}/${rStatus!.maxRounds}`);
           tui.setRunning(true);
 
