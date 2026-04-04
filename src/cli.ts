@@ -167,7 +167,6 @@ program
       // TUI mode: rich blessed terminal UI
       const tui = new CodingStudioTUI();
       tui.setRunning(true);
-      tui.setStatus(`Running: ${prompt.slice(0, 50)}${prompt.length > 50 ? "…" : ""}`);
       tui.agentLog("system", `Starting pipeline: ${prompt}`);
 
       tui.setCommandHandler((cmd, _args) => {
@@ -200,7 +199,7 @@ program
         await orchestrator.run(prompt);
       } catch (err: any) {
         tui.agentLog("system", `Pipeline failed: ${err.message}`);
-        tui.setStatus("Error");
+        tui.agentLog("system", "Pipeline stopped.");
       } finally {
         tui.setRunning(false);
         // Keep TUI alive so user can read results; Ctrl+C to exit
@@ -417,7 +416,7 @@ program
           }
 
           tui.setRunning(true);
-          tui.setStatus("Running pipeline...");
+          tui.agentLog("system", "Starting pipeline...");
 
           // Must compute config path at runtime (not module load time)
           // because cwd matters and getConfigPath() is stale
@@ -503,7 +502,7 @@ program
             .run(args.trim())
             .catch((err: Error) => {
               tui.agentLog("system", `Pipeline error: ${err.message}`);
-              tui.setStatus("Error");
+              tui.agentLog("system", "Pipeline stopped.");
             })
             .finally(() => {
               tui.setRunning(false);

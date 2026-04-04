@@ -2,18 +2,72 @@ import blessed from "blessed";
 import { spawn } from "node:child_process";
 import type { OrchestratorEvent } from "./orchestrator.js";
 
+// ── ANSI helpers (blessed tags crash on unescaped {}, so we use raw ANSI) ──
+
+const RESET = "\x1b[0m";
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const ITALIC = "\x1b[3m";
+
+const FG = {
+  black: "\x1b[30m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  white: "\x1b[37m",
+  gray: "\x1b[90m",
+} as const;
+
+const BG = {
+  blue: "\x1b[44m",
+  black: "\x1b[40m",
+} as const;
+
+function c(fg: keyof typeof FG, text: string, bold = false): string {
+  return `${bold ? BOLD : ""}${FG[fg]}${text}${RESET}`;
+}
+
+// ── Constants ──
+
+const AGENT_STYLES = {
+  planner: { icon: "◆", color: "cyan" as const, label: "Planner" },
+  generator: { icon: "◆", color: "yellow" as const, label: "Generator" },
+  evaluator: { icon: "◆", color: "magenta" as const, label: "Evaluator" },
+  user: { icon: "▶", color: "green" as const, label: "You" },
+  system: { icon: "●", color: "blue" as const, label: "System" },
+} as const;
+
+const PHASE_ICONS: Record<string, string> = {
+  planning: "📋",
+  contracting: "📝",
+  building: "🔨",
+  running: "🚀",
+  evaluating: "🔍",
+};
+
+// ── TUI Class ──
+
 export class CodingStudioTUI {
   private screen: blessed.Widgets.Screen;
   private statusBar: blessed.Widgets.BoxElement;
   private outputArea: blessed.Widgets.Log;
+  private separator: blessed.Widgets.BoxElement;
   private inputBox: blessed.Widgets.TextboxElement;
+  private hintBar: blessed.Widgets.BoxElement;
+
   private userMessages: string[] = [];
-  private textBuffer: Map<string, string> = new Map(); // agent → buffered text
+  private textBuffer = "";
   private lastAgent = "";
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private onCommand?: (cmd: string, args: string) => void;
   private inputResolver: ((value: string) => void) | null = null;
+  private startTime = 0;
+  private currentPhase = "";
+  private currentRound = 0;
 
   constructor() {
     this.screen = blessed.screen({
@@ -22,54 +76,74 @@ export class CodingStudioTUI {
       fullUnicode: true,
     });
 
-    // Status bar at top
+    // ── Status bar ──
     this.statusBar = blessed.box({
       top: 0,
       left: 0,
       width: "100%",
       height: 1,
-      content: " Coding Studio — Ready",
+      tags: false,
       style: { fg: "white", bg: "blue", bold: true },
     });
+    this.updateStatusBar("Ready");
 
-    // Main output area (scrollable log)
+    // ── Main output ──
     this.outputArea = blessed.log({
       top: 1,
       left: 0,
       width: "100%",
-      height: "100%-3",
+      height: "100%-4",
       scrollable: true,
       alwaysScroll: true,
-      scrollbar: { ch: "│", style: { fg: "cyan" } } as any,
+      scrollbar: { ch: " ", style: { bg: "gray" } } as any,
       mouse: true,
       keys: true,
       vi: true,
-      style: { fg: "white", bg: "black" },
-      tags: true,
+      tags: false, // We use raw ANSI, not blessed tags
+      style: { fg: "white" },
     } as any);
 
-    // Input box at bottom
+    // ── Separator line ──
+    this.separator = blessed.box({
+      bottom: 2,
+      left: 0,
+      width: "100%",
+      height: 1,
+      tags: false,
+      content: `${DIM}${"─".repeat(200)}${RESET}`,
+      style: { fg: "gray" },
+    });
+
+    // ── Input box ──
     this.inputBox = blessed.textbox({
+      bottom: 1,
+      left: 0,
+      width: "100%",
+      height: 1,
+      inputOnFocus: true,
+      mouse: true,
+      tags: false,
+      style: { fg: "white" },
+    });
+
+    // ── Hint bar ──
+    this.hintBar = blessed.box({
       bottom: 0,
       left: 0,
       width: "100%",
-      height: 3,
-      border: { type: "line" },
-      style: {
-        fg: "white",
-        bg: "black",
-        border: { fg: "cyan" },
-        focus: { border: { fg: "green" } },
-      },
-      inputOnFocus: true,
-      mouse: true,
+      height: 1,
+      tags: false,
+      content: ` ${DIM}/run${RESET}${DIM} start${RESET}  ${DIM}/agent${RESET}${DIM} claude${RESET}  ${DIM}/abort${RESET}  ${DIM}/quit${RESET}  ${DIM}or just type your prompt${RESET}`,
+      style: { fg: "gray" },
     });
 
     this.screen.append(this.statusBar);
     this.screen.append(this.outputArea);
+    this.screen.append(this.separator);
     this.screen.append(this.inputBox);
+    this.screen.append(this.hintBar);
 
-    // Handle input submission
+    // ── Input handling ──
     this.inputBox.on("submit", (value: string) => {
       this.handleInput(value.trim());
       (this.inputBox as any).clearValue();
@@ -77,13 +151,11 @@ export class CodingStudioTUI {
       this.screen.render();
     });
 
-    // Ctrl+C to quit
     this.screen.key(["C-c"], () => {
       this.destroy();
       process.exit(0);
     });
 
-    // Escape returns focus to input
     this.screen.key(["escape"], () => {
       this.inputBox.focus();
       this.screen.render();
@@ -91,214 +163,208 @@ export class CodingStudioTUI {
 
     this.inputBox.focus();
     this.screen.render();
+
+    // Welcome
+    this.log("");
+    this.log(`  ${BOLD}Coding Studio${RESET}`);
+    this.log(`  ${DIM}Type a prompt to start building, or use /run <prompt>${RESET}`);
+    this.log("");
   }
 
-  /** Set command handler */
+  // ── Public API ──
+
   setCommandHandler(handler: (cmd: string, args: string) => void): void {
     this.onCommand = handler;
   }
 
-  /** Update status bar */
-  setStatus(text: string): void {
-    this.statusBar.setContent(` Coding Studio — ${text}`);
-    this.screen.render();
+  setRunning(value: boolean): void {
+    this.running = value;
+    if (value) this.startTime = Date.now();
   }
 
-  /** Escape text so blessed doesn't try to parse { } as color tags */
-  static esc(text: string): string {
-    return text.replace(/\{/g, "{open}").replace(/\}/g, "{close}");
+  isRunning(): boolean {
+    return this.running;
   }
 
-  /** Append a line with blessed tags (tags in the string ARE interpreted) */
-  log(text: string): void {
-    (this.outputArea as any).log(text);
-    this.screen.render();
-  }
-
-  /** Append a line with content safely escaped (no tag interpretation for content) */
-  logSafe(text: string): void {
-    (this.outputArea as any).log(CodingStudioTUI.esc(text));
-    this.screen.render();
-  }
-
-  /** Append text without newline (for streaming) */
-  write(text: string): void {
-    (this.outputArea as any).log(text.replace(/\n$/, ""));
-    this.screen.render();
-  }
-
-  private getAgentLabel(agent: string): string {
-    const labels: Record<string, string> = {
-      planner: "{cyan-fg}{bold}[Planner]{/bold}{/cyan-fg}",
-      generator: "{yellow-fg}{bold}[Generator]{/bold}{/yellow-fg}",
-      evaluator: "{magenta-fg}{bold}[Evaluator]{/bold}{/magenta-fg}",
-      user: "{green-fg}{bold}[User]{/bold}{/green-fg}",
-      system: "{blue-fg}{bold}[System]{/bold}{/blue-fg}",
-    };
-    return labels[agent] ?? `{white-fg}[${agent}]{/white-fg}`;
-  }
-
-  /** Log a complete message with agent label */
-  agentLog(
-    agent: "planner" | "generator" | "evaluator" | "user" | "system",
-    text: string,
-  ): void {
-    this.flushTextBuffer();
-    this.log(`${this.getAgentLabel(agent)} ${CodingStudioTUI.esc(text)}`);
-  }
-
-  /** Stream a text delta — buffers and flushes complete lines */
-  agentStreamDelta(agent: string, delta: string): void {
-    // Print agent header on switch
-    if (this.lastAgent !== agent) {
-      this.flushTextBuffer();
-      this.log(`\n${this.getAgentLabel(agent)}`);
-      this.lastAgent = agent;
-    }
-
-    const buf = (this.textBuffer.get(agent) ?? "") + delta;
-    this.textBuffer.set(agent, buf);
-
-    // Flush complete lines
-    const lines = buf.split("\n");
-    if (lines.length > 1) {
-      for (let i = 0; i < lines.length - 1; i++) {
-        this.log(`  ${CodingStudioTUI.esc(lines[i])}`);
-      }
-      this.textBuffer.set(agent, lines[lines.length - 1]);
-    }
-
-    // Debounced flush for partial lines (after 100ms of no new deltas)
-    if (this.flushTimer) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(() => this.flushTextBuffer(), 100);
-  }
-
-  /** Flush any remaining text in the buffer */
-  private flushTextBuffer(): void {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-    for (const [_agent, buf] of this.textBuffer) {
-      if (buf.trim()) {
-        this.log(`  ${CodingStudioTUI.esc(buf)}`);
-      }
-    }
-    this.textBuffer.clear();
-  }
-
-  /** Log a tool call */
-  toolLog(
-    agent: string,
-    tool: string,
-    status: "start" | "end",
-    detail?: string,
-  ): void {
-    const agentColors: Record<string, string> = {
-      planner: "cyan",
-      generator: "yellow",
-      evaluator: "magenta",
-    };
-    const color = agentColors[agent] ?? "white";
-    const safeDetail = detail ? CodingStudioTUI.esc(detail) : "";
-    if (status === "start") {
-      this.log(
-        `  {${color}-fg}▸{/${color}-fg} {bold}${tool}{/bold} ${
-          safeDetail ? `{#666-fg}${safeDetail}{/#666-fg}` : ""
-        }`,
-      );
-    } else if (safeDetail) {
-      this.log(`    {#666-fg}${safeDetail}{/#666-fg}`);
-    }
-  }
-
-  /** Show eval result */
-  evalLog(
-    verdict: string,
-    score: number,
-    scores: Array<{ name: string; score: number; feedback: string }>,
-    blockers: Array<{ severity: string; description: string }>,
-    bugs: Array<{
-      severity: string;
-      description: string;
-      location?: string;
-    }>,
-  ): void {
-    const vColor = verdict === "pass" ? "green" : "red";
-    this.log(
-      `\n{${vColor}-fg}{bold}━━━ Eval: ${verdict.toUpperCase()} (${score.toFixed(1)}/10) ━━━{/bold}{/${vColor}-fg}`,
-    );
-    const e = CodingStudioTUI.esc;
-    for (const s of scores) {
-      const sColor =
-        s.score >= 7 ? "green" : s.score >= 5 ? "yellow" : "red";
-      this.log(
-        `  ${e(s.name).padEnd(18)} {${sColor}-fg}${s.score}{/${sColor}-fg}/10  {#666-fg}${e(s.feedback.slice(0, 60))}{/#666-fg}`,
-      );
-    }
-    if (blockers.length > 0) {
-      this.log(`{red-fg}Blockers:{/red-fg}`);
-      for (const b of blockers) {
-        this.log(`  {red-fg}[${e(b.severity)}]{/red-fg} ${e(b.description)}`);
-      }
-    }
-    if (bugs.length > 0) {
-      this.log(`{yellow-fg}Bugs:{/yellow-fg}`);
-      for (const bug of bugs.slice(0, 5)) {
-        const loc = bug.location
-          ? ` {#666-fg}(${e(bug.location)}){/#666-fg}`
-          : "";
-        this.log(
-          `  {yellow-fg}[${e(bug.severity)}]{/yellow-fg}${loc} ${e(bug.description)}`,
-        );
-      }
-    }
-  }
-
-  /** Get and clear queued user messages */
   drainUserMessages(): string[] {
     const msgs = [...this.userMessages];
     this.userMessages = [];
     return msgs;
   }
 
-  /** Check if there are pending user messages */
   hasUserMessages(): boolean {
     return this.userMessages.length > 0;
   }
 
-  /** Handle an orchestrator event */
+  destroy(): void {
+    this.screen.destroy();
+  }
+
+  // ── Logging ──
+
+  private log(text: string): void {
+    (this.outputArea as any).log(text);
+    this.screen.render();
+  }
+
+  agentLog(agent: "planner" | "generator" | "evaluator" | "user" | "system", text: string): void {
+    this.flushTextBuffer();
+    const s = AGENT_STYLES[agent];
+    this.log(`  ${c(s.color, s.icon)} ${c(s.color, s.label, true)}  ${text}`);
+  }
+
+  // ── Streaming text ──
+
+  agentStreamDelta(agent: string, delta: string): void {
+    if (this.lastAgent !== agent) {
+      this.flushTextBuffer();
+      const s = AGENT_STYLES[agent as keyof typeof AGENT_STYLES] ?? AGENT_STYLES.system;
+      this.log("");
+      this.log(`  ${c(s.color, s.icon)} ${c(s.color, s.label, true)}`);
+      this.lastAgent = agent;
+    }
+
+    this.textBuffer += delta;
+
+    const lines = this.textBuffer.split("\n");
+    if (lines.length > 1) {
+      for (let i = 0; i < lines.length - 1; i++) {
+        this.log(`  ${DIM}│${RESET} ${lines[i]}`);
+      }
+      this.textBuffer = lines[lines.length - 1];
+    }
+
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => this.flushTextBuffer(), 150);
+  }
+
+  private flushTextBuffer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.textBuffer.trim()) {
+      this.log(`  ${DIM}│${RESET} ${this.textBuffer}`);
+    }
+    this.textBuffer = "";
+  }
+
+  // ── Tool calls ──
+
+  private toolLog(agent: string, tool: string, status: "start" | "end", detail?: string): void {
+    const s = AGENT_STYLES[agent as keyof typeof AGENT_STYLES] ?? AGENT_STYLES.system;
+    if (status === "start") {
+      this.log(`  ${DIM}│${RESET} ${c(s.color, "▸")} ${BOLD}${tool}${RESET} ${detail ? DIM + detail + RESET : ""}`);
+    } else if (detail) {
+      this.log(`  ${DIM}│  └ ${detail}${RESET}`);
+    }
+  }
+
+  // ── Eval result ──
+
+  private evalLog(
+    verdict: string,
+    score: number,
+    scores: Array<{ name: string; score: number; feedback: string }>,
+    blockers: Array<{ severity: string; description: string }>,
+    bugs: Array<{ severity: string; description: string; location?: string }>,
+  ): void {
+    const v = verdict === "pass";
+    const vStr = v ? c("green", "PASS", true) : c("red", "FAIL", true);
+    const sStr = v ? c("green", score.toFixed(1)) : c("red", score.toFixed(1));
+
+    this.log("");
+    this.log(`  ┌─ Eval Result: ${vStr} ${sStr}/10 ${"─".repeat(40)}`);
+
+    for (const s of scores) {
+      const sc = s.score >= 7 ? c("green", String(s.score)) : s.score >= 5 ? c("yellow", String(s.score)) : c("red", String(s.score));
+      const bar = "█".repeat(Math.round(s.score)) + `${DIM}${"░".repeat(10 - Math.round(s.score))}${RESET}`;
+      this.log(`  │ ${s.name.padEnd(18)} ${bar} ${sc}  ${DIM}${s.feedback.slice(0, 50)}${RESET}`);
+    }
+
+    if (blockers.length > 0) {
+      this.log(`  │`);
+      this.log(`  │ ${c("red", "Blockers:", true)}`);
+      for (const b of blockers) {
+        this.log(`  │  ${c("red", "✖")} ${b.description.slice(0, 100)}`);
+      }
+    }
+
+    if (bugs.length > 0) {
+      this.log(`  │`);
+      this.log(`  │ ${c("yellow", "Bugs:", true)}`);
+      for (const bug of bugs.slice(0, 5)) {
+        const loc = bug.location ? `${DIM}(${bug.location})${RESET} ` : "";
+        this.log(`  │  ${c("yellow", "⚠")} ${loc}${bug.description.slice(0, 80)}`);
+      }
+    }
+
+    this.log(`  └${"─".repeat(60)}`);
+  }
+
+  // ── Status bar ──
+
+  private updateStatusBar(label: string): void {
+    let elapsed = "";
+    if (this.startTime > 0 && this.running) {
+      const s = Math.floor((Date.now() - this.startTime) / 1000);
+      const m = Math.floor(s / 60);
+      elapsed = ` ${DIM}${m}:${String(s % 60).padStart(2, "0")}${RESET}`;
+    }
+
+    const phase = this.currentPhase ? ` ${PHASE_ICONS[this.currentPhase] ?? "●"} ${this.currentPhase}` : "";
+    const round = this.currentRound > 0 ? ` R${this.currentRound}` : "";
+
+    this.statusBar.setContent(
+      ` ${BOLD}Coding Studio${RESET}${BG.blue}${FG.white}  ${label}${phase}${round}${elapsed} `,
+    );
+    this.screen.render();
+  }
+
+  // ── Orchestrator events ──
+
   handleOrchestratorEvent(event: OrchestratorEvent): void {
     switch (event.type) {
-      case "phase":
-        this.log(
-          `\n{bold}{blue-fg}━━━ ${event.phase.toUpperCase()} ━━━{/blue-fg}{/bold}`,
-        );
-        this.setStatus(`Phase: ${event.phase}`);
+      case "phase": {
+        this.flushTextBuffer();
+        this.lastAgent = "";
+        this.currentPhase = event.phase;
+        const icon = PHASE_ICONS[event.phase] ?? "●";
+        this.log("");
+        this.log(`  ${BOLD}${icon} ${event.phase.toUpperCase()}${RESET}`);
+        this.log(`  ${DIM}${"─".repeat(50)}${RESET}`);
+        this.updateStatusBar("Running");
         break;
+      }
+
       case "round":
-        this.log(
-          `\n{bold}{yellow-fg}═══ Round ${event.round} ═══{/yellow-fg}{/bold}`,
-        );
-        this.setStatus(`Round ${event.round}`);
+        this.flushTextBuffer();
+        this.lastAgent = "";
+        this.currentRound = event.round;
+        this.log("");
+        this.log(`  ${c("yellow", `═══ Round ${event.round} ═══`, true)}`);
+        this.updateStatusBar("Running");
         break;
+
       case "log":
-        this.log(`{#666-fg}${CodingStudioTUI.esc(event.message)}{/#666-fg}`);
+        this.log(`  ${DIM}${event.message}${RESET}`);
         break;
+
       case "agent_text":
         this.agentStreamDelta(event.agent, event.delta);
         break;
+
       case "tool_use":
         this.toolLog(
           event.agent,
           event.tool,
           event.status,
-          event.status === "start"
-            ? event.args?.slice(0, 80)
-            : event.result?.slice(0, 120),
+          event.status === "start" ? event.args?.slice(0, 80) : event.result?.slice(0, 100),
         );
         break;
+
       case "eval":
+        this.flushTextBuffer();
         this.evalLog(
           event.report.verdict,
           event.report.overallScore,
@@ -307,46 +373,42 @@ export class CodingStudioTUI {
           event.report.bugs,
         );
         break;
+
       case "pause":
-        this.log(`\n{yellow-fg}[PAUSE]{/yellow-fg} ${event.reason}`);
-        this.log(
-          "{green-fg}Type your feedback, press Enter to continue, or type /abort{/green-fg}",
-        );
+        this.flushTextBuffer();
+        this.log("");
+        this.log(`  ${c("yellow", "⏸  PAUSE", true)}  ${event.reason}`);
+        this.log(`  ${DIM}Press Enter to continue, or type feedback / /abort${RESET}`);
+        this.updateStatusBar("Paused");
         break;
+
       case "complete": {
+        this.flushTextBuffer();
         const h = event.status.history;
-        const lastScore =
-          h.length > 0
-            ? (h[h.length - 1].score?.toFixed(1) ?? "N/A")
-            : "N/A";
-        this.log(
-          `\n{green-fg}{bold}Pipeline complete{/bold}{/green-fg} (${event.status.mode}, ${h.length} rounds, score: ${lastScore})`,
-        );
-        this.setStatus("Ready");
+        const lastScore = h.length > 0 ? (h[h.length - 1].score?.toFixed(1) ?? "—") : "—";
+        const elapsed = this.startTime > 0 ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+
+        this.log("");
+        this.log(`  ${c("green", "✓  Pipeline complete", true)}`);
+        this.log(`  ${DIM}Mode: ${event.status.mode} | Rounds: ${h.length} | Score: ${lastScore} | Time: ${m}:${String(s).padStart(2, "0")}${RESET}`);
+        this.log("");
+
         this.running = false;
+        this.currentPhase = "";
+        this.currentRound = 0;
+        this.updateStatusBar("Ready");
         break;
       }
     }
   }
 
-  /** Mark pipeline as running */
-  setRunning(value: boolean): void {
-    this.running = value;
-  }
+  // ── Agent spawn ──
 
-  /** Returns whether pipeline is currently running */
-  isRunning(): boolean {
-    return this.running;
-  }
-
-  /**
-   * Spawn interactive claude CLI (takes over terminal).
-   * Destroys the blessed screen first, then spawns claude with stdio:inherit.
-   * After claude exits, logs a note and exits — the user should restart the TUI.
-   */
   async spawnAgent(): Promise<void> {
     this.screen.destroy();
-    process.stdout.write("\n[Coding Studio] Spawning claude CLI...\n");
+    process.stdout.write("\n  Spawning claude CLI...\n\n");
 
     return new Promise((resolve) => {
       const proc = spawn("claude", [], {
@@ -355,33 +417,20 @@ export class CodingStudioTUI {
       });
 
       proc.on("exit", (code) => {
-        process.stdout.write(
-          `\n[Coding Studio] claude exited (code ${code ?? "null"}).\n`,
-        );
-        process.stdout.write(
-          "[Coding Studio] TUI was destroyed. Run `coding-studio` again to restart.\n",
-        );
+        process.stdout.write(`\n  claude exited (code ${code ?? "null"}). Run \`coding-studio\` to return.\n`);
         resolve();
       });
 
       proc.on("error", (err) => {
-        process.stdout.write(
-          `\n[Coding Studio] Failed to spawn claude: ${err.message}\n`,
-        );
-        process.stdout.write(
-          "[Coding Studio] TUI was destroyed. Run `coding-studio` again to restart.\n",
-        );
+        process.stdout.write(`\n  Failed to spawn claude: ${err.message}\n`);
         resolve();
       });
     });
   }
 
-  destroy(): void {
-    this.screen.destroy();
-  }
+  // ── Input handling ──
 
   private handleInput(value: string): void {
-    // If pipeline is waiting for confirmation (pause), resolve the waiter
     if (this.inputResolver) {
       this.agentLog("user", value || "(continue)");
       const resolve = this.inputResolver;
@@ -392,7 +441,6 @@ export class CodingStudioTUI {
 
     if (!value) return;
 
-    // Commands
     if (value.startsWith("/")) {
       const parts = value.slice(1).split(" ");
       const cmd = parts[0] ?? "";
@@ -401,21 +449,16 @@ export class CodingStudioTUI {
       return;
     }
 
-    // Plain text behavior depends on pipeline state
     if (this.running) {
-      // Pipeline running → queue as steering feedback
       this.agentLog("user", value);
       this.userMessages.push(value);
-      this.log("{#666-fg}  (feedback queued for next agent checkpoint){/#666-fg}");
+      this.log(`  ${DIM}  queued for next checkpoint${RESET}`);
     } else {
-      // No pipeline → auto-start /run
       this.agentLog("user", value);
-      this.log("{#666-fg}  Starting pipeline...{/#666-fg}");
       this.onCommand?.("run", value);
     }
   }
 
-  /** Wait for user input at a pause point. Next submit goes here, not to handleInput's normal flow. */
   waitForInput(): Promise<string> {
     return new Promise((resolve) => {
       this.inputResolver = resolve;
